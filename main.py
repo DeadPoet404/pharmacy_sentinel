@@ -5,13 +5,13 @@ from sentinel.db.manager import DatabaseManager
 from sentinel.ui.login import BrutalistLogin
 from sentinel.ui.pos import BrutalistPOS
 from sentinel.security.auth import hash_pin
+from sentinel.logic.sessions import SessionManager
 
-def bootstrap_db(db):
-    """Ensures at least one owner exists so the system can be accessed."""
+def bootstrap_db(db, device_id):
+    """Ensures at least one owner exists."""
     cursor = db.conn.cursor()
     cursor.execute("SELECT COUNT(*) FROM users")
     if cursor.fetchone()[0] == 0:
-        print("First run detected. Creating industrial admin (PIN: 1234)...")
         h, s = hash_pin("1234")
         db.conn.execute("""
             INSERT INTO users (uuid, username, display_name, role, pin_hash, pin_salt, created_at)
@@ -21,26 +21,35 @@ def bootstrap_db(db):
 
 def run_app():
     app = QApplication(sys.argv)
+    device_id = "DEV-001"
     
-    # 1. Initialize Database
     db = DatabaseManager("sentinel.db")
     db.connect()
     db.initialize()
-    
-    # 2. Setup Default User
-    bootstrap_db(db)
+    bootstrap_db(db, device_id)
 
     main_win = None
+    session_mgr = SessionManager(db, device_id)
 
-    # 3. Define Logic to switch windows
     def on_login(user_id, user_name):
         nonlocal main_win
         login_win.close()
-        # Create and show the new Industrial POS
-        main_win = BrutalistPOS(db, user_id, user_name)
+        
+        # 1. OPEN A SESSION (Satisfies Foreign Key)
+        # In a real app, we check if one is already open, but for now we create one.
+        cursor = db.conn.cursor()
+        cursor.execute("SELECT id FROM pos_sessions WHERE status = 'OPEN' AND device_id = ?", (device_id,))
+        res = cursor.fetchone()
+        
+        if res:
+            session_id = res[0]
+        else:
+            session_id = session_mgr.open_session(user_id)
+        
+        # 2. Start POS with the active session_id
+        main_win = BrutalistPOS(db, user_id, user_name, session_id)
         main_win.show()
 
-    # 4. Start with Brutalist Login
     login_win = BrutalistLogin(db, on_login)
     login_win.show()
     
