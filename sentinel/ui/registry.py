@@ -7,8 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
 from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, TechnicalCard, SectionLabel,
-    COLOR_ACCENT, COLOR_DIM, COLOR_TEXT, COLOR_SURFACE,
-    COLOR_BORDER, COLOR_MUTED,
+    COLOR_ACCENT, COLOR_DIM, COLOR_TEXT, COLOR_BORDER, COLOR_MUTED,
 )
 
 
@@ -53,7 +52,6 @@ class ProductRegistry(QWidget):
         fl.setContentsMargins(22, 22, 22, 22)
         fl.setSpacing(14)
         fl.setLabelAlignment(Qt.AlignLeft)
-
         form_card.setStyleSheet(form_card.styleSheet() + f"""
             QLabel {{
                 color: {COLOR_DIM};
@@ -77,7 +75,6 @@ class ProductRegistry(QWidget):
         self.save_btn = IndustrialButton("COMMIT TO LEDGER")
         self.save_btn.clicked.connect(self.save_product)
         fl.addRow(self.save_btn)
-
         content.addWidget(form_card, 2)
 
         right = QVBoxLayout()
@@ -94,6 +91,13 @@ class ProductRegistry(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.table.verticalHeader().setDefaultSectionSize(42)
         right.addWidget(self.table, 1)
+
+        self.cat_empty = QLabel("No products in catalog")
+        self.cat_empty.setAlignment(Qt.AlignCenter)
+        self.cat_empty.setStyleSheet(
+            f"color: {COLOR_DIM}; font-size: 11px; letter-spacing: 0.08em;"
+        )
+        right.addWidget(self.cat_empty)
         content.addLayout(right, 3)
 
         body.addLayout(content, 1)
@@ -120,6 +124,7 @@ class ProductRegistry(QWidget):
             a.setFont(f)
             self.table.setItem(r, 0, a)
             self.table.setItem(r, 1, b)
+        self.cat_empty.setVisible(self.table.rowCount() == 0)
 
     def save_product(self):
         cursor = self.db.conn.cursor()
@@ -136,12 +141,20 @@ class ProductRegistry(QWidget):
                 ),
             )
             prod_id = cursor.lastrowid
-            cursor.execute(
-                "INSERT INTO product_versions (product_id, version_label, units_per_strip, "
-                "strips_per_box, units_per_box, effective_date, created_at) "
-                "VALUES (?, 'V1', 10, 10, 100, 'now', 'now')",
-                (prod_id,),
-            )
+            try:
+                cursor.execute(
+                    "INSERT INTO product_versions (product_id, version_label, units_per_strip, "
+                    "strips_per_box, units_per_box, effective_date, created_at, is_current) "
+                    "VALUES (?, 'V1', 10, 10, 100, 'now', 'now', 1)",
+                    (prod_id,),
+                )
+            except Exception:
+                cursor.execute(
+                    "INSERT INTO product_versions (product_id, version_label, units_per_strip, "
+                    "strips_per_box, units_per_box, effective_date, created_at) "
+                    "VALUES (?, 'V1', 10, 10, 100, 'now', 'now')",
+                    (prod_id,),
+                )
             self.db.conn.commit()
             self.refresh_list()
             self.generic_in.clear()

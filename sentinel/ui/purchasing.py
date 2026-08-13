@@ -129,17 +129,24 @@ class BatchIngest(QWidget):
             )
             res = cursor.fetchone()
             if not res:
+                cursor.execute(
+                    "SELECT id FROM product_versions WHERE product_id = ? ORDER BY id DESC LIMIT 1",
+                    (prod_id,),
+                )
+                res = cursor.fetchone()
+            if not res:
                 raise ValueError("Product missing version mapping. Re-add product in Registry.")
             version_id = res[0]
 
             on_hand = self.inv.get_on_hand(prod_id)
             cursor.execute(
-                "SELECT cost_minor_per_unit FROM stock_ledger WHERE product_id = ? "
+                "SELECT cost_minor_per_unit FROM stock_ledger "
+                "WHERE product_id = ? AND cost_minor_per_unit IS NOT NULL "
                 "ORDER BY event_seq DESC LIMIT 1",
                 (prod_id,),
             )
             ledger_res = cursor.fetchone()
-            old_wac = ledger_res[0] if ledger_res else cost_p
+            old_wac = ledger_res[0] if ledger_res and ledger_res[0] is not None else cost_p
             new_wac = calculate_wac(on_hand, old_wac, qty, cost_p)
 
             b_uuid = str(uuid.uuid4())

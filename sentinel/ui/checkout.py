@@ -114,6 +114,20 @@ class SettlementUI(QWidget):
 
         fl.addWidget(lbl)
         fl.addWidget(self.tendered_in)
+
+        quick = QHBoxLayout()
+        quick.setSpacing(8)
+        for label, fn in (
+            ("EXACT", self.fill_exact),
+            ("50", lambda: self.fill_amount(50)),
+            ("100", lambda: self.fill_amount(100)),
+            ("200", lambda: self.fill_amount(200)),
+        ):
+            b = IndustrialButton(label, primary=False)
+            b.setFixedHeight(40)
+            b.clicked.connect(fn)
+            quick.addWidget(b)
+        fl.addLayout(quick)
         fl.addWidget(self.change_out)
         body.addWidget(form_card)
 

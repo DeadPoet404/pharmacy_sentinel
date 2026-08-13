@@ -13,15 +13,18 @@ from sentinel.ui.components import (
 from sentinel.ui.registry import ProductRegistry
 from sentinel.ui.purchasing import BatchIngest
 from sentinel.ui.checkout import SettlementUI
+from sentinel.ui.zreport import ZReportCeremony
 from sentinel.logic.sales import SalesController
+from sentinel.logic.pricing import calculate_tier_prices
 
 
 class BrutalistPOS(QWidget):
     def __init__(self, db_manager, user_id, user_name, session_id):
         super().__init__()
-        self.db, self.user_id, self.session_id, self.user_name = (
-            db_manager, user_id, session_id, user_name
-        )
+        self.db = db_manager
+        self.user_id = user_id
+        self.session_id = session_id
+        self.user_name = user_name
         self.current_uom = "UNIT"
         self.cart_items = []
         self.sales_ctrl = SalesController(db_manager, "DEV-001")
@@ -77,15 +80,12 @@ class BrutalistPOS(QWidget):
             "letter-spacing: 0.2em; background: transparent; padding-top: 2px;"
         )
 
-        brand_col = QVBoxLayout()
-        brand_col.setSpacing(0)
         brand_row = QHBoxLayout()
         brand_row.setSpacing(10)
         brand_row.addWidget(mark)
         brand_row.addWidget(brand)
-        brand_col.addLayout(brand_row)
 
-        l.addLayout(brand_col)
+        l.addLayout(brand_row)
         l.addWidget(sub)
         l.addStretch()
 
@@ -101,16 +101,21 @@ class BrutalistPOS(QWidget):
         cl.setContentsMargins(14, 6, 14, 6)
         cl.setSpacing(18)
         op = QLabel(f"OP  {self.user_name}")
-        op.setStyleSheet(f"color: {COLOR_TEXT}; font-weight: 700; font-size: 11px; letter-spacing: 0.08em;")
+        op.setStyleSheet(
+            f"color: {COLOR_TEXT}; font-weight: 700; font-size: 11px; letter-spacing: 0.08em;"
+        )
         sess = QLabel(f"SESS  {self.session_id}")
-        sess.setStyleSheet(f"color: {COLOR_MUTED}; font-weight: 600; font-size: 11px; letter-spacing: 0.08em;")
+        sess.setStyleSheet(
+            f"color: {COLOR_MUTED}; font-weight: 600; font-size: 11px; letter-spacing: 0.08em;"
+        )
         live = QLabel("LIVE")
-        live.setStyleSheet(f"color: {COLOR_ACCENT}; font-weight: 800; font-size: 10px; letter-spacing: 0.16em;")
+        live.setStyleSheet(
+            f"color: {COLOR_ACCENT}; font-weight: 800; font-size: 10px; letter-spacing: 0.16em;"
+        )
         cl.addWidget(op)
         cl.addWidget(sess)
         cl.addWidget(live)
         l.addWidget(chip)
-
         self.root.addWidget(nav)
 
     def setup_ledger(self):
@@ -120,30 +125,62 @@ class BrutalistPOS(QWidget):
         head = QHBoxLayout()
         head.addWidget(SectionLabel("Transaction ledger"))
         head.addStretch()
-        count = QLabel("CART")
-        count.setObjectName("cartHint")
-        count.setStyleSheet(f"color: {COLOR_DIM}; font-size: 10px; font-weight: 700; letter-spacing: 0.16em;")
-        self.cart_count = count
-        head.addWidget(count)
+        self.cart_count = QLabel("CART")
+        self.cart_count.setStyleSheet(
+            f"color: {COLOR_DIM}; font-size: 10px; font-weight: 700; letter-spacing: 0.16em;"
+        )
+        head.addWidget(self.cart_count)
         col.addLayout(head)
 
-        self.cart_table = QTableWidget(0, 3)
+        self.cart_table = QTableWidget(0, 4)
         self.cart_table.setAlternatingRowColors(True)
-        self.cart_table.setHorizontalHeaderLabels(["ITEM", "QTY", "TOTAL"])
+        self.cart_table.setHorizontalHeaderLabels(["ITEM", "UOM", "QTY", "TOTAL"])
         self.cart_table.verticalHeader().setVisible(False)
         self.cart_table.setShowGrid(False)
         self.cart_table.setSelectionBehavior(QTableWidget.SelectRows)
-        self.cart_table.setFocusPolicy(Qt.NoFocus)
+        self.cart_table.setFocusPolicy(Qt.StrongFocus)
         self.cart_table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self.cart_table.itemDoubleClicked.connect(self.remove_cart_line)
         hdr = self.cart_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.Fixed)
         hdr.setSectionResizeMode(2, QHeaderView.Fixed)
+        hdr.setSectionResizeMode(3, QHeaderView.Fixed)
         self.cart_table.setColumnWidth(1, 72)
-        self.cart_table.setColumnWidth(2, 110)
+        self.cart_table.setColumnWidth(2, 56)
+        self.cart_table.setColumnWidth(3, 100)
         self.cart_table.verticalHeader().setDefaultSectionSize(48)
         apply_deep_elevation(self.cart_table, "MEDIUM")
-        col.addWidget(self.cart_table, 1)
+
+        ledger_stack = QFrame()
+        ledger_stack.setStyleSheet("background: transparent; border: none;")
+        ls = QVBoxLayout(ledger_stack)
+        ls.setContentsMargins(0, 0, 0, 0)
+        ls.addWidget(self.cart_table, 1)
+        self.cart_empty = QLabel("Empty  ·  double-click a match to add  ·  Del removes  ·  +/− qty")
+        self.cart_empty.setAlignment(Qt.AlignCenter)
+        self.cart_empty.setStyleSheet(
+            f"color: {COLOR_DIM}; font-size: 12px; letter-spacing: 0.06em; "
+            "padding: 8px 0 4px 0; background: transparent;"
+        )
+        ls.addWidget(self.cart_empty)
+
+        cart_ops = QHBoxLayout()
+        cart_ops.setSpacing(8)
+        btn_minus = IndustrialButton("−", primary=False)
+        btn_plus = IndustrialButton("+", primary=False)
+        btn_rm = IndustrialButton("REMOVE", primary=False)
+        btn_minus.setFixedWidth(56)
+        btn_plus.setFixedWidth(56)
+        btn_minus.clicked.connect(lambda: self.nudge_qty(-1))
+        btn_plus.clicked.connect(lambda: self.nudge_qty(1))
+        btn_rm.clicked.connect(self.remove_cart_line)
+        cart_ops.addWidget(btn_minus)
+        cart_ops.addWidget(btn_plus)
+        cart_ops.addWidget(btn_rm)
+        cart_ops.addStretch()
+        ls.addLayout(cart_ops)
+        col.addWidget(ledger_stack, 1)
 
         self.total_card = QFrame()
         self.total_card.setFixedHeight(132)
@@ -171,8 +208,7 @@ class BrutalistPOS(QWidget):
         tl.addWidget(cap)
         tl.addWidget(self.total_lbl, 1)
         col.addWidget(self.total_card)
-
-        self.workspace.addLayout(col, 5)
+        self.workspace.addLayout(col, 4)
 
     def setup_interaction_pane(self):
         col = QVBoxLayout()
@@ -195,14 +231,14 @@ class BrutalistPOS(QWidget):
         )
         self.search_box = QLineEdit()
         self.search_box.setPlaceholderText("Molecule, SKU, or barcode…")
-        self.search_box.setStyleSheet(f"""
-            QLineEdit {{
+        self.search_box.setStyleSheet("""
+            QLineEdit {
                 background: transparent;
                 border: none;
                 padding: 10px 16px 16px 16px;
                 font-size: 18px;
                 font-weight: 500;
-            }}
+            }
         """)
         sw.addWidget(hint)
         sw.addWidget(self.search_box)
@@ -214,8 +250,8 @@ class BrutalistPOS(QWidget):
         results = QVBoxLayout()
         results.setSpacing(8)
         results.addWidget(SectionLabel("Matches"))
-        self.search_table = QTableWidget(0, 2)
-        self.search_table.setHorizontalHeaderLabels(["PRODUCT", "PRICE"])
+        self.search_table = QTableWidget(0, 3)
+        self.search_table.setHorizontalHeaderLabels(["PRODUCT", "OH", f"PRICE / {self.current_uom}"])
         self.search_table.verticalHeader().setVisible(False)
         self.search_table.setShowGrid(False)
         self.search_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -223,13 +259,24 @@ class BrutalistPOS(QWidget):
         self.search_table.setAlternatingRowColors(True)
         self.search_table.itemDoubleClicked.connect(self.select_item)
         sh = self.search_table.horizontalHeader()
+        sh.setMinimumSectionSize(80)
         sh.setSectionResizeMode(0, QHeaderView.Stretch)
         sh.setSectionResizeMode(1, QHeaderView.Fixed)
-        self.search_table.setColumnWidth(1, 96)
+        sh.setSectionResizeMode(2, QHeaderView.Fixed)
+        self.search_table.setColumnWidth(1, 92)
+        self.search_table.setColumnWidth(2, 148)
+        self.search_table.setTextElideMode(Qt.ElideNone)
         self.search_table.verticalHeader().setDefaultSectionSize(44)
         apply_deep_elevation(self.search_table, "MEDIUM")
         results.addWidget(self.search_table, 1)
-        mid_row.addLayout(results, 3)
+        self.search_empty = QLabel("No molecules match")
+        self.search_empty.setAlignment(Qt.AlignCenter)
+        self.search_empty.setStyleSheet(
+            f"color: {COLOR_DIM}; font-size: 11px; letter-spacing: 0.08em; padding-bottom: 4px;"
+        )
+        self.search_empty.hide()
+        results.addWidget(self.search_empty)
+        mid_row.addLayout(results, 5)
 
         viz_col = QVBoxLayout()
         viz_col.setSpacing(8)
@@ -252,17 +299,27 @@ class BrutalistPOS(QWidget):
             "background: transparent; letter-spacing: 0.18em;"
         )
         self.mode_tag.setAlignment(Qt.AlignCenter)
-        hint_uom = QLabel("F4  CYCLE")
+        vl.addWidget(self.viz_img, 1)
+        vl.addWidget(self.mode_tag)
+        uom_row = QHBoxLayout()
+        uom_row.setSpacing(6)
+        self.uom_btns = {}
+        for label in ("UNIT", "STRIP", "BOX"):
+            b = IndustrialButton(label, primary=False)
+            b.setFixedHeight(40)
+            b.clicked.connect(lambda checked=False, u=label: self.set_uom(u))
+            uom_row.addWidget(b)
+            self.uom_btns[label] = b
+        vl.addLayout(uom_row)
+        hint_uom = QLabel("CLICK  ·  OR F4")
         hint_uom.setAlignment(Qt.AlignCenter)
         hint_uom.setStyleSheet(
             f"color: {COLOR_DIM}; font-size: 10px; font-weight: 700; letter-spacing: 0.2em;"
         )
-        vl.addWidget(self.viz_img, 1)
-        vl.addWidget(self.mode_tag)
         vl.addWidget(hint_uom)
+        self._paint_uom_btns()
         viz_col.addWidget(self.viz_card, 1)
         mid_row.addLayout(viz_col, 2)
-
         col.addLayout(mid_row, 1)
 
         bot_row = QHBoxLayout()
@@ -271,8 +328,11 @@ class BrutalistPOS(QWidget):
         btn_in.clicked.connect(self.open_ingest)
         btn_reg = IndustrialButton("F12  REGISTRY", primary=False)
         btn_reg.clicked.connect(self.open_reg)
+        btn_z = IndustrialButton("F10  Z-REPORT", primary=False)
+        btn_z.clicked.connect(self.open_zreport)
         bot_row.addWidget(btn_in)
         bot_row.addWidget(btn_reg)
+        bot_row.addWidget(btn_z)
         bot_row.addStretch()
 
         self.pay_btn = IndustrialButton("F8  FINALIZE")
@@ -293,22 +353,86 @@ class BrutalistPOS(QWidget):
         f.setWeight(QFont.DemiBold)
         item.setFont(f)
 
+    def _pack_size(self, prod_id):
+        if not hasattr(self.db, "conn") or self.db.conn is None:
+            return 10, 10
+        cursor = self.db.conn.cursor()
+        row = None
+        try:
+            cursor.execute(
+                "SELECT units_per_strip, strips_per_box FROM product_versions "
+                "WHERE product_id = ? AND is_current = 1",
+                (prod_id,),
+            )
+            row = cursor.fetchone()
+        except Exception:
+            row = None
+        if not row:
+            cursor.execute(
+                "SELECT units_per_strip, strips_per_box FROM product_versions "
+                "WHERE product_id = ? ORDER BY id DESC LIMIT 1",
+                (prod_id,),
+            )
+            row = cursor.fetchone()
+        if not row:
+            return 10, 10
+        return max(int(row[0] or 10), 1), max(int(row[1] or 10), 1)
+
+    def _quote(self, wac_pesewas, ups, spb, uom=None):
+        uom = uom or self.current_uom
+        wac = int(wac_pesewas or 0)
+        tiers = calculate_tier_prices(wac, ups, spb)
+        key = uom.lower()
+        pesewas = tiers.get(key, tiers["unit"])
+        atoms = 1
+        if uom == "STRIP":
+            atoms = ups
+        elif uom == "BOX":
+            atoms = ups * spb
+        return pesewas / 100.0, atoms, tiers
+
     def select_item(self, item):
         row = item.row()
         it = self.search_table.item(row, 0)
-        p_id, form, price = it.data(Qt.UserRole), it.data(Qt.UserRole + 1).lower(), it.data(Qt.UserRole + 2)
-        img_path = os.path.join(self.assets_dir, f"{form}.webp")
+        p_id = it.data(Qt.UserRole)
+        form = str(it.data(Qt.UserRole + 1) or "pill").lower()
+        price = it.data(Qt.UserRole + 2) or 0.0
+        atoms = it.data(Qt.UserRole + 3) or 1
+        form_key = {
+            "pill": "pill", "tablet": "pill", "pills": "pill",
+            "capsule": "capsule", "cap": "capsule",
+            "syrup": "syrup", "liquid": "syrup",
+            "strip": "strip", "blister": "strip",
+        }.get(form, form)
+        img_path = os.path.join(self.assets_dir, f"{form_key}.webp")
         if os.path.exists(img_path):
             self.viz_img.setPixmap(
                 QPixmap(img_path).scaled(280, 220, Qt.KeepAspectRatio, Qt.SmoothTransformation)
             )
+            self.viz_img.setText("")
         else:
+            self.viz_img.setPixmap(QPixmap())
             self.viz_img.setText(it.text())
             self.viz_img.setStyleSheet(
                 f"background: #0B0D10; border-radius: 10px; color: {COLOR_TEXT}; "
                 "font-size: 16px; font-weight: 700; letter-spacing: 0.04em;"
             )
-        self.cart_items.append({"id": p_id, "name": it.text(), "qty": 1, "price": price})
+        uom = self.current_uom
+        for line in self.cart_items:
+            if line["id"] == p_id and line.get("uom") == uom:
+                line["qty"] = line.get("qty", 1) + 1
+                line["qty_atomic"] = line["qty"] * line.get("atoms_per", 1)
+                self.update_ledger()
+                return
+        self.cart_items.append({
+            "id": p_id,
+            "name": it.text(),
+            "qty": 1,
+            "price": price,
+            "uom": uom,
+            "atoms_per": atoms,
+            "qty_atomic": atoms,
+        })
         self.update_ledger()
 
     def run_search(self):
@@ -324,8 +448,7 @@ class BrutalistPOS(QWidget):
             "WHERE p.generic_molecule LIKE ?",
             (f"%{txt}%",),
         )
-        res = cursor.fetchall()
-        self._fill_search(res)
+        self._fill_search(cursor.fetchall())
 
     def _demo_search(self, txt):
         catalog = [
@@ -339,24 +462,46 @@ class BrutalistPOS(QWidget):
             (8, "CETIRIZINE", "tablet", 350),
         ]
         q = (txt or "").upper()
-        res = [r for r in catalog if q in r[1]]
-        self._fill_search(res)
+        self._fill_search([r for r in catalog if q in r[1]])
 
     def _fill_search(self, res):
+        self.search_table.setHorizontalHeaderLabels(
+            ["PRODUCT", f"OH {self.current_uom}", "PRICE"]
+        )
         self.search_table.setRowCount(0)
         for r in res:
             row = self.search_table.rowCount()
             self.search_table.insertRow(row)
             name = QTableWidgetItem(str(r[1]).upper())
-            price = (r[3] / 100) if r[3] else 0.0
+            ups, spb = self._pack_size(r[0])
+            price, atoms, _ = self._quote(r[3], ups, spb)
+            if hasattr(self.sales_ctrl, "inv") and hasattr(self.db, "conn") and self.db.conn:
+                oh = int(self.sales_ctrl.inv.get_on_hand(r[0]) or 0)
+            else:
+                oh = 24
+            pack = max(int(atoms), 1)
+            packs, rem = oh // pack, oh % pack
+            if self.current_uom == "UNIT":
+                oh_txt = str(oh)
+            elif rem:
+                oh_txt = f"{packs}+{rem}u"
+            else:
+                oh_txt = str(packs)
+            oh_item = QTableWidgetItem(oh_txt)
             price_item = QTableWidgetItem(f"{price:.2f}")
             self._style_item(name)
+            self._style_item(oh_item, align_right=True, muted=oh > 0)
+            if oh <= 0:
+                oh_item.setForeground(QColor("#E07A5F"))
             self._style_item(price_item, align_right=True, muted=True)
             self.search_table.setItem(row, 0, name)
-            self.search_table.setItem(row, 1, price_item)
+            self.search_table.setItem(row, 1, oh_item)
+            self.search_table.setItem(row, 2, price_item)
             name.setData(Qt.UserRole, r[0])
             name.setData(Qt.UserRole + 1, r[2])
             name.setData(Qt.UserRole + 2, price)
+            name.setData(Qt.UserRole + 3, atoms)
+        self.search_empty.setVisible(self.search_table.rowCount() == 0)
 
     def update_ledger(self):
         self.cart_table.setRowCount(0)
@@ -365,31 +510,70 @@ class BrutalistPOS(QWidget):
             r = self.cart_table.rowCount()
             self.cart_table.insertRow(r)
             n = QTableWidgetItem(i["name"])
+            u = QTableWidgetItem(i.get("uom", "UNIT"))
             q = QTableWidgetItem(str(i.get("qty", 1)))
-            p = QTableWidgetItem(f"{i['price']:.2f}")
+            p = QTableWidgetItem(f"{i['price'] * i.get('qty', 1):.2f}")
             self._style_item(n)
+            self._style_item(u, muted=True)
             self._style_item(q, align_right=True, muted=True)
             self._style_item(p, align_right=True)
             self.cart_table.setItem(r, 0, n)
-            self.cart_table.setItem(r, 1, q)
-            self.cart_table.setItem(r, 2, p)
+            self.cart_table.setItem(r, 1, u)
+            self.cart_table.setItem(r, 2, q)
+            self.cart_table.setItem(r, 3, p)
             total += i["price"] * i.get("qty", 1)
         self.total_lbl.setText(f"{total:,.2f}")
         n = len(self.cart_items)
-        self.cart_count.setText(f"{n} LINE{'S' if n != 1 else ''}")
+        self.cart_count.setText("CART" if n == 0 else f"{n} LINE{'S' if n != 1 else ''}")
+        self.cart_empty.setVisible(n == 0)
 
     def setup_shortcuts(self):
         QShortcut(QKeySequence("F2"), self, self.search_box.setFocus)
+        QShortcut(QKeySequence("F3"), self, self.open_ingest)
         QShortcut(QKeySequence("F4"), self, self.cycle_uom)
         QShortcut(QKeySequence("F8"), self, self.open_checkout)
-        QShortcut(QKeySequence("F3"), self, self.open_ingest)
+        QShortcut(QKeySequence("F10"), self, self.open_zreport)
         QShortcut(QKeySequence("F12"), self, self.open_reg)
+
+        def bind(seq, fn):
+            sc = QShortcut(QKeySequence(seq), self)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(fn)
+
+        bind(Qt.Key_Delete, self.remove_cart_line)
+        bind("+", lambda: self.nudge_qty(1))
+        bind("=", lambda: self.nudge_qty(1))
+        bind("-", lambda: self.nudge_qty(-1))
+
+    def _paint_uom_btns(self):
+        if not hasattr(self, "uom_btns"):
+            return
+        for label, b in self.uom_btns.items():
+            on = label == self.current_uom
+            b.setStyleSheet(
+                f"""
+                QPushButton {{
+                    background: {"#E8B86D" if on else "#181C23"};
+                    color: {"#14110C" if on else "#F4F1EA"};
+                    border: 1px solid {"#E8B86D" if on else "#2A3140"};
+                    border-radius: 10px;
+                    font-weight: 800;
+                    font-size: 11px;
+                    letter-spacing: 0.1em;
+                }}
+                """
+            )
+
+    def set_uom(self, uom):
+        self.current_uom = uom
+        self.mode_tag.setText(uom)
+        self._paint_uom_btns()
+        self.run_search()
 
     def cycle_uom(self):
         order = ["UNIT", "STRIP", "BOX"]
         idx = (order.index(self.current_uom) + 1) % 3
-        self.current_uom = order[idx]
-        self.mode_tag.setText(self.current_uom)
+        self.set_uom(order[idx])
 
     def open_reg(self):
         self.reg = ProductRegistry(self.db)
@@ -399,7 +583,65 @@ class BrutalistPOS(QWidget):
         self.ingest = BatchIngest(self.db, "DEV-001", on_complete=self.run_search)
         self.ingest.show()
 
+    def _selected_cart_row(self):
+        if not self.cart_items:
+            return None
+        r = self.cart_table.currentRow()
+        if r < 0 or r >= len(self.cart_items):
+            return len(self.cart_items) - 1
+        return r
+
+    def keyPressEvent(self, event):
+        if self.search_box.hasFocus() and event.text().isalpha():
+            return super().keyPressEvent(event)
+        key = event.key()
+        if key in (Qt.Key_Delete, Qt.Key_Backspace) and not self.search_box.hasFocus():
+            self.remove_cart_line()
+            return
+        if key in (Qt.Key_Plus, Qt.Key_Equal):
+            self.nudge_qty(1)
+            return
+        if key == Qt.Key_Minus:
+            self.nudge_qty(-1)
+            return
+        super().keyPressEvent(event)
+
+    def remove_cart_line(self, *args):
+        r = self._selected_cart_row()
+        if r is None:
+            return
+        del self.cart_items[r]
+        self.update_ledger()
+
+    def nudge_qty(self, delta):
+        r = self._selected_cart_row()
+        if r is None:
+            return
+        q = self.cart_items[r].get("qty", 1) + delta
+        if q <= 0:
+            del self.cart_items[r]
+        else:
+            self.cart_items[r]["qty"] = q
+            self.cart_items[r]["qty_atomic"] = q * self.cart_items[r].get("atoms_per", 1)
+        self.update_ledger()
+
+    def open_zreport(self):
+        ans = QMessageBox.question(
+            self,
+            "END OF DAY",
+            "This encrypts the ledger, closes the session, and exits SENTINEL.\nContinue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ans != QMessageBox.Yes:
+            return
+        self.z_ui = ZReportCeremony(self.db, self.session_id, self.user_id, "DEV-001")
+        self.z_ui.show()
+
     def open_checkout(self):
+        if not self.cart_items:
+            QMessageBox.information(self, "EMPTY LEDGER", "Add at least one line before settlement.")
+            return
         raw = self.total_lbl.text().replace(",", "")
         t = float(raw or 0)
         self.checkout_ui = SettlementUI(t, self.finalize_sale)
@@ -407,12 +649,17 @@ class BrutalistPOS(QWidget):
 
     def finalize_sale(self, method, tendered):
         if self.sales_ctrl.commit_sale(
-            self.user_id, self.session_id, self.cart_items,
-            float(self.total_lbl.text().replace(",", "") or 0), method, tendered,
+            self.user_id,
+            self.session_id,
+            self.cart_items,
+            float(self.total_lbl.text().replace(",", "") or 0),
+            method,
+            tendered,
         ):
             QMessageBox.information(self, "SUCCESS", "Sale committed.")
             self.cart_items = []
             self.update_ledger()
+            self.run_search()
             self.viz_img.clear()
             self.viz_img.setText("No item\nselected")
             self.viz_img.setStyleSheet(

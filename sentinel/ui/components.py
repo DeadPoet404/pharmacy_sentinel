@@ -101,6 +101,23 @@ QScrollBar::handle:horizontal {{
 QMessageBox {{
     background: {COLOR_SURFACE};
 }}
+QMessageBox QLabel {{
+    color: {COLOR_TEXT};
+}}
+QComboBox QAbstractItemView {{
+    background: {COLOR_SURFACE};
+    border: 1px solid {COLOR_BORDER};
+    selection-background-color: #2A2418;
+    selection-color: {COLOR_ACCENT};
+    color: {COLOR_TEXT};
+    outline: none;
+}}
+QToolTip {{
+    background: {COLOR_SURFACE_2};
+    color: {COLOR_TEXT};
+    border: 1px solid {COLOR_BORDER};
+    padding: 6px 8px;
+}}
 QDialog {{
     background: {COLOR_BG};
 }}

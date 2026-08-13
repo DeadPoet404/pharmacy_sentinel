@@ -1,10 +1,17 @@
 import sys
 import os
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, 
-                             QPushButton, QProgressBar, QMessageBox)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QProgressBar, QMessageBox,
+)
 from PySide6.QtCore import Qt, QTimer
 from sentinel.logic.backup import BackupEngine
 from sentinel.logic.sessions import SessionManager
+from sentinel.ui.components import (
+    GLOBAL_STYLE, IndustrialButton, SectionLabel,
+    COLOR_ACCENT, COLOR_DIM, COLOR_TEXT, COLOR_MUTED,
+    COLOR_SURFACE, COLOR_BORDER, COLOR_BG,
+)
+
 
 class ZReportCeremony(QWidget):
     def __init__(self, db_manager, session_id, user_id, device_id):
@@ -12,77 +19,157 @@ class ZReportCeremony(QWidget):
         self.db = db_manager
         self.session_id = session_id
         self.user_id = user_id
-        
-        # For simplicity, we use a fixed master key for Phase 1
+
         self.master_key = "SENTINEL-MASTER-KEY-12345"
         self.backup_eng = BackupEngine("sentinel.db", self.master_key)
         self.sess_mgr = SessionManager(db_manager, device_id)
 
-        self.setWindowTitle("Z_REPORT_CEREMONY")
-        self.setFixedSize(500, 400)
-        self.setStyleSheet("background-color: #e0e0e0; font-family: monospace;")
+        self.setWindowTitle("End of day")
+        self.setFixedSize(520, 480)
+        self.setStyleSheet(GLOBAL_STYLE)
 
-        layout = QVBoxLayout(self)
-        
-        self.header = QLabel("➔ END_OF_DAY_GOVERNANCE")
-        self.header.setStyleSheet("background-color: black; color: #FF4500; padding: 5px; font-weight: bold;")
-        layout.addWidget(self.header)
+        root = QVBoxLayout(self)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
 
-        self.console = QFrame()
-        self.console.setStyleSheet("border: 2px solid black; background: #f4f4f4;")
-        c_layout = QVBoxLayout(self.console)
-        
-        self.status = QLabel("WAITING_FOR_USB_ENCRYPTION...")
-        self.status.setStyleSheet("font-weight: bold; font-size: 14px;")
-        c_layout.addWidget(self.status)
-        
-        self.progress = QProgressBar()
-        self.progress.setStyleSheet("""
-            QProgressBar { border: 2px solid black; background: #ddd; height: 30px; text-align: center; }
-            QProgressBar::chunk { background-color: #FF4500; }
+        bar = QFrame()
+        bar.setFixedHeight(56)
+        bar.setStyleSheet(f"background: #0E1116; border-bottom: 1px solid {COLOR_BORDER};")
+        bl = QHBoxLayout(bar)
+        bl.setContentsMargins(22, 0, 22, 0)
+        mark = QLabel("●")
+        mark.setStyleSheet(f"color: {COLOR_ACCENT}; font-size: 12px;")
+        title = QLabel("Z-REPORT  ·  GOVERNANCE")
+        title.setStyleSheet(
+            f"color: {COLOR_TEXT}; font-weight: 800; font-size: 12px; letter-spacing: 0.2em;"
+        )
+        bl.addWidget(mark)
+        bl.addWidget(title)
+        bl.addStretch()
+        root.addWidget(bar)
+
+        body = QVBoxLayout()
+        body.setContentsMargins(24, 20, 24, 24)
+        body.setSpacing(14)
+
+        body.addWidget(SectionLabel("End of day close"))
+
+        intro = QLabel(
+            "Encrypt the ledger, write a Z-report, then close this register session. "
+            "The application will exit when the ceremony completes."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {COLOR_MUTED}; font-size: 13px;")
+        body.addWidget(intro)
+
+        meta = QFrame()
+        meta.setStyleSheet(f"""
+            QFrame {{
+                background: {COLOR_SURFACE};
+                border: 1px solid {COLOR_BORDER};
+                border-radius: 12px;
+            }}
         """)
-        c_layout.addWidget(self.progress)
-        
-        layout.addWidget(self.console)
+        ml = QVBoxLayout(meta)
+        ml.setContentsMargins(16, 14, 16, 14)
+        ml.setSpacing(6)
+        sess = QLabel(f"SESSION   {self.session_id}")
+        sess.setStyleSheet(
+            f"color: {COLOR_TEXT}; font-size: 12px; font-weight: 700; letter-spacing: 0.12em;"
+        )
+        dest = QLabel("ARCHIVE   ~/SentinelBackups")
+        dest.setStyleSheet(
+            f"color: {COLOR_DIM}; font-size: 11px; font-weight: 600; letter-spacing: 0.1em;"
+        )
+        ml.addWidget(sess)
+        ml.addWidget(dest)
+        body.addWidget(meta)
 
-        self.run_btn = QPushButton("INITIATE_BACKUP_AND_CLOSE ➔")
-        self.run_btn.setFixedHeight(60)
-        self.run_btn.setStyleSheet("background-color: #FF4500; border: 2px solid black; font-weight: bold;")
+        console = QFrame()
+        console.setStyleSheet(f"""
+            QFrame {{
+                background: #0B0D10;
+                border: 1px solid {COLOR_BORDER};
+                border-radius: 12px;
+            }}
+        """)
+        cl = QVBoxLayout(console)
+        cl.setContentsMargins(16, 16, 16, 16)
+        cl.setSpacing(12)
+
+        self.status = QLabel("READY  ·  waiting to encrypt")
+        self.status.setStyleSheet(
+            f"color: {COLOR_ACCENT}; font-size: 12px; font-weight: 700; letter-spacing: 0.1em;"
+        )
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setTextVisible(False)
+        self.progress.setFixedHeight(10)
+        self.progress.setStyleSheet(f"""
+            QProgressBar {{
+                background: {COLOR_SURFACE};
+                border: 1px solid {COLOR_BORDER};
+                border-radius: 5px;
+            }}
+            QProgressBar::chunk {{
+                background: {COLOR_ACCENT};
+                border-radius: 4px;
+            }}
+        """)
+        cl.addWidget(self.status)
+        cl.addWidget(self.progress)
+        body.addWidget(console)
+
+        body.addStretch()
+
+        self.run_btn = IndustrialButton("INITIATE BACKUP AND CLOSE")
+        self.run_btn.setFixedHeight(58)
         self.run_btn.clicked.connect(self.start_ceremony)
-        layout.addWidget(self.run_btn)
+        body.addWidget(self.run_btn)
+
+        wrap = QWidget()
+        wrap.setLayout(body)
+        wrap.setStyleSheet(f"background: {COLOR_BG};")
+        root.addWidget(wrap, 1)
 
     def start_ceremony(self):
         self.run_btn.setEnabled(False)
-        self.status.setText("GENERATING_ENCRYPTED_ARCHIVE...")
+        self.status.setText("GENERATING ENCRYPTED ARCHIVE…")
         self.progress.setValue(30)
-        
-        # Run backup logic
         QTimer.singleShot(1000, self.do_backup)
 
     def do_backup(self):
         try:
-            # Simulate USB path (on Linux, we'll just use a local folder)
             backup_dir = os.path.expanduser("~/SentinelBackups")
             os.makedirs(backup_dir, exist_ok=True)
-            
+
             backup_name = f"sentinel_backup_{self.session_id}"
             dest = os.path.join(backup_dir, backup_name)
-            
-            # 1. Create and Encrypt
+
             sha256, final_path = self.backup_eng.create_encrypted_backup(dest)
+            self.progress.setValue(60)
+            self.status.setText("VERIFYING ARCHIVE…")
+            if not self.backup_eng.verify_backup(final_path, sha256):
+                raise RuntimeError("Backup hash mismatch — session left OPEN.")
             self.progress.setValue(70)
-            
-            # 2. Verify and Record Z-Report
-            z_id = self.sess_mgr.generate_z_report(self.session_id, self.user_id, final_path, sha256)
+            self.status.setText("WRITING Z-REPORT…")
+
+            self.sess_mgr.generate_z_report(self.session_id, self.user_id, final_path, sha256)
             self.progress.setValue(90)
-            
-            # 3. Close the Session
+            self.status.setText("CLOSING SESSION…")
+
             self.sess_mgr.close_session(self.session_id, self.user_id)
             self.progress.setValue(100)
-            
-            QMessageBox.information(self, "SUCCESS", f"DAY_CLOSED.\nARCHIVE_LOCATION: {final_path}")
-            sys.exit(0) # Terminate app after Z-Report
-            
+            self.status.setText("DAY CLOSED")
+
+            QMessageBox.information(
+                self, "SUCCESS", f"Day closed.\nArchive:\n{final_path}"
+            )
+            sys.exit(0)
+
         except Exception as e:
-            QMessageBox.critical(self, "BACKUP_FAILED", str(e))
+            QMessageBox.critical(self, "BACKUP FAILED", str(e))
             self.run_btn.setEnabled(True)
+            self.status.setText("FAILED  ·  retry when ready")
+            self.progress.setValue(0)
