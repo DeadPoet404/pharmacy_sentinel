@@ -1,203 +1,164 @@
 import sys
 from PySide6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QLineEdit, 
-                             QPushButton, QLabel, QFrame)
+                             QPushButton, QLabel, QFrame, QGridLayout)
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QFontDatabase
+from PySide6.QtGui import QFont, QColor
 from sentinel.security.auth import verify_pin
 
-class ShadcnLightLogin(QWidget):
+class BrutalistLogin(QWidget):
     def __init__(self, db_manager, on_login_success):
         super().__init__()
         self.db = db_manager
         self.on_success = on_login_success
         
-        self.setWindowTitle("Sentinel")
-        self.setFixedSize(1200, 800)
-        
-        # Shadcn Zinc Light Palette
-        self.bg_color = "#ffffff"       # White
-        self.border_color = "#e4e4e7"   # Zinc 200
-        self.text_primary = "#09090b"   # Zinc 950
-        self.text_muted = "#71717a"     # Zinc 500
-        self.input_bg = "#ffffff"
-        self.primary = "#18181b"        # Zinc 900 (Black)
-        self.primary_foreground = "#fafafa" # Zinc 50 (Off-white)
-        self.badge_bg = "#f4f4f5"       # Zinc 100
-        
-        self.setStyleSheet(f"background-color: {self.bg_color};")
+        self.setWindowTitle("SENTINEL_SYSTEM_V1.0")
+        self.setFixedSize(1000, 700)
+        self.setStyleSheet("background-color: #e0e0e0;") # Industrial Gray
 
-        # Main Layout
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setAlignment(Qt.AlignCenter)
+        # Main Layout (Centered Grid)
+        self.layout = QVBoxLayout(self)
+        self.layout.setAlignment(Qt.AlignCenter)
 
-        # The Login "Card" 
-        self.card = QFrame()
-        self.card.setFixedWidth(380)
-        self.card.setStyleSheet(f"""
-            QFrame {{
-                background-color: {self.bg_color};
-                border: 1px solid {self.border_color};
-                border-radius: 8px;
-            }}
+        # The Modular Console Card
+        self.console = QFrame()
+        self.console.setFixedSize(450, 550)
+        self.console.setStyleSheet("""
+            QFrame {
+                background-color: #f4f4f4;
+                border: 2px solid black;
+            }
         """)
         
-        self.card_layout = QVBoxLayout(self.card)
-        self.card_layout.setContentsMargins(32, 40, 32, 40)
-        self.card_layout.setSpacing(8)
+        self.c_layout = QVBoxLayout(self.console)
+        self.c_layout.setContentsMargins(0, 0, 0, 0)
+        self.c_layout.setSpacing(0)
 
-        # 1. Header
-        self.title_label = QLabel("Unlock Station")
-        self.title_label.setStyleSheet(f"""
-            color: {self.text_primary};
-            font-size: 20px;
-            font-weight: 600;
-            border: none;
-            background: transparent;
+        # Header Section (Top Bar)
+        self.header = QLabel("AUTH_PROTOCOL_04")
+        self.header.setFixedHeight(30)
+        self.header.setStyleSheet("""
+            background-color: black;
+            color: #FF4500;
+            font-family: monospace;
+            font-weight: bold;
+            padding-left: 10px;
         """)
-        self.title_label.setAlignment(Qt.AlignCenter)
+        self.c_layout.addWidget(self.header)
 
-        self.subtitle_label = QLabel("Enter your PIN to resume operation.")
-        self.subtitle_label.setStyleSheet(f"""
-            color: {self.text_muted};
-            font-size: 13px;
-            border: none;
-            background: transparent;
-        """)
-        self.subtitle_label.setAlignment(Qt.AlignCenter)
+        # Title Block
+        self.title_block = QFrame()
+        self.title_block.setFixedHeight(150)
+        self.title_block.setStyleSheet("border-bottom: 2px solid black;")
+        tb_layout = QVBoxLayout(self.title_block)
+        
+        self.main_title = QLabel("STATION_")
+        self.main_title.setStyleSheet("font-size: 60px; font-weight: 900; color: black;")
+        self.main_title.setAlignment(Qt.AlignCenter)
+        
+        self.sub_title = QLabel("ACCESS_LOCKED")
+        self.sub_title.setStyleSheet("font-size: 20px; color: black; font-family: monospace;")
+        self.sub_title.setAlignment(Qt.AlignCenter)
+        
+        tb_layout.addWidget(self.main_title)
+        tb_layout.addWidget(self.sub_title)
+        self.c_layout.addWidget(self.title_block)
 
-        # 2. Status Badge (Shadcn Light Badge)
-        self.status_label = QLabel("System: Verifying Integrity")
-        self.status_label.setFixedWidth(180)
-        self.status_label.setFixedHeight(22)
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setStyleSheet(f"""
-            color: {self.text_primary};
-            font-size: 11px;
-            font-weight: 500;
-            background-color: {self.badge_bg};
-            border: 1px solid {self.border_color};
-            border-radius: 11px;
-            margin-top: 8px;
-        """)
+        # Input Area
+        self.input_area = QFrame()
+        self.input_layout = QVBoxLayout(self.input_area)
+        self.input_layout.setContentsMargins(40, 40, 40, 40)
+        self.input_layout.setSpacing(20)
 
-        # 3. Input Section
-        self.input_container = QWidget()
-        self.input_container.setStyleSheet("border: none; background: transparent;")
-        self.input_layout = QVBoxLayout(self.input_container)
-        self.input_layout.setContentsMargins(0, 20, 0, 0)
-        self.input_layout.setSpacing(12)
+        self.status_msg = QLabel("RUNNING_INTEGRITY_CHECK...")
+        self.status_msg.setStyleSheet("font-family: monospace; color: #666;")
+        self.status_msg.setAlignment(Qt.AlignCenter)
 
         self.pin_input = QLineEdit()
         self.pin_input.setEchoMode(QLineEdit.Password)
-        self.pin_input.setPlaceholderText("••••••")
+        self.pin_input.setPlaceholderText("ENTER_PIN")
         self.pin_input.setAlignment(Qt.AlignCenter)
-        self.pin_input.setMaxLength(6)
-        self.pin_input.setFixedHeight(40)
-        self.pin_input.setStyleSheet(f"""
-            QLineEdit {{
-                background-color: {self.input_bg};
-                border: 1px solid {self.border_color};
-                border-radius: 6px;
-                color: {self.text_primary};
-                font-size: 16px;
-                letter-spacing: 4px;
-            }}
-            QLineEdit:focus {{
-                border: 1px solid {self.text_muted};
-            }}
-        """)
+        self.pin_input.setFixedHeight(60)
         self.pin_input.setVisible(False)
+        self.pin_input.setStyleSheet("""
+            QLineEdit {
+                border: 2px solid black;
+                background-color: white;
+                font-size: 32px;
+                color: black;
+                font-family: monospace;
+            }
+        """)
         self.pin_input.returnPressed.connect(self.attempt_login)
 
-        self.unlock_btn = QPushButton("Continue")
-        self.unlock_btn.setFixedHeight(40)
-        self.unlock_btn.setCursor(Qt.PointingHandCursor)
-        self.unlock_btn.setStyleSheet(f"""
-            QPushButton {{
-                background-color: {self.primary};
-                color: {self.primary_foreground};
-                border-radius: 6px;
-                font-weight: 600;
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: #27272a;
-            }}
-            QPushButton:pressed {{
-                background-color: #3f3f46;
-            }}
-        """)
+        self.unlock_btn = QPushButton("UNLOCK_SYSTEM ➔")
+        self.unlock_btn.setFixedHeight(50)
         self.unlock_btn.setVisible(False)
+        self.unlock_btn.setCursor(Qt.PointingHandCursor)
+        self.unlock_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #FF4500;
+                color: black;
+                border: 2px solid black;
+                font-weight: bold;
+                font-size: 16px;
+                font-family: monospace;
+            }
+            QPushButton:hover { background-color: #e63e00; }
+        """)
         self.unlock_btn.clicked.connect(self.attempt_login)
 
-        # Assemble
-        self.card_layout.addWidget(self.title_label)
-        self.card_layout.addWidget(self.subtitle_label)
-        self.card_layout.addWidget(self.status_label, 0, Qt.AlignCenter)
-        
+        self.input_layout.addWidget(self.status_msg)
         self.input_layout.addWidget(self.pin_input)
         self.input_layout.addWidget(self.unlock_btn)
-        self.card_layout.addWidget(self.input_container)
+        self.c_layout.addWidget(self.input_area)
 
-        self.main_layout.addWidget(self.card)
+        # Bottom Sub-Grid (Metrics/Decoration)
+        self.bottom_grid = QFrame()
+        self.bottom_grid.setFixedHeight(60)
+        self.bottom_grid.setStyleSheet("border-top: 2px solid black;")
+        bg_layout = QGridLayout(self.bottom_grid)
+        bg_layout.setContentsMargins(0,0,0,0)
+        bg_layout.setSpacing(0)
         
-        # Logic Timer
-        QTimer.singleShot(1500, self.run_integrity_check)
+        for i, txt in enumerate(["V.1.0", "SYS_STABLE", "LEDGER_OK"]):
+            lbl = QLabel(txt)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("border-right: 1px solid black; font-family: monospace; font-size: 10px;")
+            bg_layout.addWidget(lbl, 0, i)
 
-    def run_integrity_check(self):
-        try:
-            cursor = self.db.conn.cursor()
-            cursor.execute("PRAGMA integrity_check;")
-            if cursor.fetchone()[0] == "ok":
-                self.status_label.setVisible(False)
-                self.pin_input.setVisible(True)
-                self.unlock_btn.setVisible(True)
-                self.pin_input.setFocus()
-        except:
-            self.status_label.setText("Integrity Failed")
-            self.status_label.setStyleSheet("color: #ef4444; border: 1px solid #fecaca; background: #fef2f2; font-size: 11px;")
+        self.c_layout.addWidget(self.bottom_grid)
+        self.layout.addWidget(self.console)
+        
+        QTimer.singleShot(1500, self.run_check)
+
+    def run_check(self):
+        self.status_msg.setText("GOVERNANCE_ACTIVE")
+        self.pin_input.setVisible(True)
+        self.unlock_btn.setVisible(True)
+        self.pin_input.setFocus()
 
     def attempt_login(self):
         pin = self.pin_input.text()
         cursor = self.db.conn.cursor()
         cursor.execute("SELECT id, display_name, pin_hash, pin_salt FROM users WHERE is_active = 1")
         users = cursor.fetchall()
-        
         for user in users:
             if verify_pin(pin, user['pin_hash'], user['pin_salt']):
                 self.on_success(user['id'], user['display_name'])
                 return
-        
-        # Error state
-        self.pin_input.setStyleSheet(self.pin_input.styleSheet().replace(self.border_color, "#ef4444"))
-        QTimer.singleShot(500, lambda: self.pin_input.setStyleSheet(self.pin_input.styleSheet().replace("#ef4444", self.border_color)))
         self.pin_input.clear()
+        self.main_title.setText("ERROR_")
+        QTimer.singleShot(1000, lambda: self.main_title.setText("STATION_"))
 
 if __name__ == "__main__":
     from sentinel.db.manager import DatabaseManager
     from sentinel.security.auth import hash_pin
     import uuid
-    
     app = QApplication(sys.argv)
-    
-    # Set modern system font
-    font = QFont("Segoe UI", 10)
-    if sys.platform == "linux":
-        font = QFont("Inter", 10)
-    app.setFont(font)
-    
-    db = DatabaseManager("ui_test.db")
-    db.connect()
-    db.initialize()
-    
+    db = DatabaseManager("ui_test.db"); db.connect(); db.initialize()
     h, s = hash_pin("1234")
-    db.conn.execute("INSERT OR IGNORE INTO users (uuid, username, display_name, role, pin_hash, pin_salt, created_at) VALUES (?, 'admin', 'Test Owner', 'owner', ?, ?, 'now')", (str(uuid.uuid4()), h, s))
+    db.conn.execute("INSERT OR IGNORE INTO users (uuid, username, display_name, role, pin_hash, pin_salt, created_at) VALUES (?, 'admin', 'OWNER', 'owner', ?, ?, 'now')", (str(uuid.uuid4()), h, s))
     db.conn.commit()
-    
-    def success(uid, name):
-        print(f"✅ Access Granted: {name}")
-        sys.exit(0)
-        
-    win = ShadcnLightLogin(db, success)
+    win = BrutalistLogin(db, lambda uid, name: sys.exit(0))
     win.show()
     sys.exit(app.exec())
