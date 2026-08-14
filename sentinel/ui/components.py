@@ -1,7 +1,7 @@
 """SENTINEL shared UI kit — keep every name the rest of the app already imports."""
 
-from PySide6.QtWidgets import QPushButton, QLabel, QFrame
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QPushButton, QLabel, QFrame, QHBoxLayout
+from PySide6.QtCore import Qt, QTimer
 
 # ── palette (dark industrial) ──────────────────────────────────────────────
 COLOR_BG = "#0B0D10"
@@ -235,3 +235,51 @@ class TechnicalCard(QFrame):
         """)
         if title:
             self.setToolTip(str(title))
+class Toast(QFrame):
+    """Auto-dismissing overlay notification — replaces success modals.
+
+    Usage: toast.show_message("TEXT", kind="success"|"error"|"info",
+                              duration_ms=1600)
+    Positions itself bottom-center of its parent and hides automatically.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("Toast")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(18, 10, 18, 10)
+        self.label = QLabel("")
+        lay.addWidget(self.label)
+        self._timer = QTimer(self)
+        self._timer.setSingleShot(True)
+        self._timer.timeout.connect(self.hide)
+        self.hide()
+
+    def show_message(self, text, kind="success", duration_ms=1600):
+        color = {
+            "success": COLOR_OK,
+            "error": COLOR_DANGER,
+            "info": COLOR_ACCENT,
+        }.get(kind, COLOR_ACCENT)
+        self.label.setText(text)
+        self.label.setStyleSheet(
+            f"background: transparent; color: {color}; font-size: 13px; "
+            "font-weight: 800; letter-spacing: 0.12em;"
+        )
+        self.setStyleSheet(
+            f"QFrame#Toast {{ background: {COLOR_SURFACE_2}; "
+            f"border: 1px solid {color}; border-radius: 10px; }}"
+        )
+        self.adjustSize()
+        self._reposition()
+        self.raise_()
+        self.show()
+        self._timer.start(duration_ms)
+
+    def _reposition(self):
+        p = self.parentWidget()
+        if p is None:
+            return
+        self.move((p.width() - self.width()) // 2, p.height() - self.height() - 28)
+

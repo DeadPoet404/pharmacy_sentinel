@@ -160,7 +160,6 @@ class BatchIngest(QWidget):
             self.inv.record_movement(prod_id, qty, "PURCHASE_IN", "po", 0, batch_id, new_wac)
 
             self.db.conn.commit()
-            QMessageBox.information(self, "SUCCESS", "Stock ingested.")
             self.close()
             if self.on_complete:
                 self.on_complete()

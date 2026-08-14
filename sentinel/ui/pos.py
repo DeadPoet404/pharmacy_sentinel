@@ -9,6 +9,7 @@ from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, SectionLabel, TechnicalCard,
     COLOR_ACCENT, COLOR_MUTED, COLOR_DIM, COLOR_SURFACE, COLOR_BORDER,
     COLOR_TEXT, COLOR_BG, apply_deep_elevation,
+    Toast,
 )
 from sentinel.ui.registry import ProductRegistry
 from sentinel.ui.purchasing import BatchIngest
@@ -90,6 +91,7 @@ class BrutalistPOS(QWidget):
         self.setup_shortcuts()
         self.run_search()
         QTimer.singleShot(0, self.search_box.setFocus)
+        self.toast = Toast(self)
 
     def _build_nav(self):
         nav = QFrame()
@@ -671,7 +673,11 @@ class BrutalistPOS(QWidget):
         self.reg.show()
 
     def open_ingest(self):
-        self.ingest = BatchIngest(self.db, "DEV-001", on_complete=self.run_search)
+        def _done():
+            self.run_search()
+            self.toast.show_message("STOCK INGESTED", "success")
+
+        self.ingest = BatchIngest(self.db, "DEV-001", on_complete=_done)
         self.ingest.show()
 
     def _selected_cart_row(self):
@@ -799,7 +805,7 @@ class BrutalistPOS(QWidget):
 
     def open_checkout(self):
         if not self.cart_items:
-            QMessageBox.information(self, "EMPTY LEDGER", "Add at least one line before settlement.")
+            self.toast.show_message("LEDGER EMPTY  ·  ADD A LINE FIRST", "error")
             return
         raw = self.total_lbl.text().replace(",", "")
         t = float(raw or 0)
@@ -815,7 +821,8 @@ class BrutalistPOS(QWidget):
             method,
             tendered,
         ):
-            QMessageBox.information(self, "SUCCESS", "Sale committed.")
+            change = tendered - float(self.total_lbl.text().replace(",", "") or 0)
+            self.toast.show_message(f"SALE COMMITTED  ·  CHANGE {change:,.2f}", "success")
             self.cart_items = []
             self.update_ledger()
             self.run_search()
