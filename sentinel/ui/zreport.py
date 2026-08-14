@@ -3,7 +3,7 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QProgressBar, QMessageBox,
 )
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import Qt, QThread, QObject, Signal
 from sentinel.logic.backup import BackupEngine
 from sentinel.logic.sessions import SessionManager
 from sentinel.ui.components import (
@@ -11,6 +11,41 @@ from sentinel.ui.components import (
     COLOR_ACCENT, COLOR_DIM, COLOR_TEXT, COLOR_MUTED,
     COLOR_SURFACE, COLOR_BORDER, COLOR_BG,
 )
+
+
+class _CeremonyWorker(QObject):
+    """Runs the encrypted-backup + verification off the UI thread."""
+
+    progress = Signal(int)
+    status = Signal(str)
+    ok = Signal(str, str)
+    bad = Signal(str)
+    done = Signal()
+
+    def __init__(self, master_key, session_id):
+        super().__init__()
+        self._master_key = master_key
+        self._session_id = session_id
+
+    def run(self):
+        try:
+            self.status.emit("GENERATING ENCRYPTED ARCHIVE…")
+            self.progress.emit(30)
+            backup_dir = os.path.expanduser("~/SentinelBackups")
+            os.makedirs(backup_dir, exist_ok=True)
+            backup_name = f"sentinel_backup_{self._session_id}"
+            dest = os.path.join(backup_dir, backup_name)
+            engine = BackupEngine("sentinel.db", self._master_key)
+            sha256, final_path = engine.create_encrypted_backup(dest)
+            self.progress.emit(60)
+            self.status.emit("VERIFYING ARCHIVE…")
+            if not engine.verify_backup(final_path, sha256):
+                raise RuntimeError("Backup hash mismatch — session left OPEN.")
+            self.progress.emit(70)
+            self.ok.emit(sha256, final_path)
+        except Exception as e:
+            self.bad.emit(str(e))
+        self.done.emit()
 
 
 class ZReportCeremony(QWidget):
@@ -134,42 +169,53 @@ class ZReportCeremony(QWidget):
         root.addWidget(wrap, 1)
 
     def start_ceremony(self):
+        if getattr(self, "_busy", False):
+            return
+        self._busy = True
+        self._pending_success = None
         self.run_btn.setEnabled(False)
         self.status.setText("GENERATING ENCRYPTED ARCHIVE…")
         self.progress.setValue(30)
-        QTimer.singleShot(1000, self.do_backup)
 
-    def do_backup(self):
-        try:
-            backup_dir = os.path.expanduser("~/SentinelBackups")
-            os.makedirs(backup_dir, exist_ok=True)
+        self._thread = QThread(self)
+        self._worker = _CeremonyWorker(self.master_key, self.session_id)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self.progress.setValue)
+        self._worker.status.connect(self.status.setText)
+        self._worker.ok.connect(self._on_ceremony_ok)
+        self._worker.bad.connect(self._on_ceremony_bad)
+        self._worker.done.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.finished.connect(self._on_thread_finished)
+        self._thread.start()
 
-            backup_name = f"sentinel_backup_{self.session_id}"
-            dest = os.path.join(backup_dir, backup_name)
+    def _on_ceremony_ok(self, sha256, final_path):
+        """Heavy work done off-thread; fast DB writes stay on the UI thread."""
+        self.progress.setValue(80)
+        self.status.setText("WRITING Z-REPORT…")
+        self.sess_mgr.generate_z_report(self.session_id, self.user_id, final_path, sha256)
+        self.progress.setValue(90)
+        self.status.setText("CLOSING SESSION…")
+        self.sess_mgr.close_session(self.session_id, self.user_id)
+        self.progress.setValue(100)
+        self.status.setText("DAY CLOSED")
+        self._pending_success = final_path
 
-            sha256, final_path = self.backup_eng.create_encrypted_backup(dest)
-            self.progress.setValue(60)
-            self.status.setText("VERIFYING ARCHIVE…")
-            if not self.backup_eng.verify_backup(final_path, sha256):
-                raise RuntimeError("Backup hash mismatch — session left OPEN.")
-            self.progress.setValue(70)
-            self.status.setText("WRITING Z-REPORT…")
-
-            self.sess_mgr.generate_z_report(self.session_id, self.user_id, final_path, sha256)
-            self.progress.setValue(90)
-            self.status.setText("CLOSING SESSION…")
-
-            self.sess_mgr.close_session(self.session_id, self.user_id)
-            self.progress.setValue(100)
-            self.status.setText("DAY CLOSED")
-
+    def _on_thread_finished(self):
+        """Exit only after the worker thread has fully stopped (avoids
+        Qt aborting on a destroyed-but-running QThread)."""
+        if self._pending_success:
+            self._busy = False
             QMessageBox.information(
-                self, "SUCCESS", f"Day closed.\nArchive:\n{final_path}"
+                self, "SUCCESS", f"Day closed.\nArchive:\n{self._pending_success}"
             )
             sys.exit(0)
 
-        except Exception as e:
-            QMessageBox.critical(self, "BACKUP FAILED", str(e))
-            self.run_btn.setEnabled(True)
-            self.status.setText("FAILED  ·  retry when ready")
-            self.progress.setValue(0)
+    def _on_ceremony_bad(self, message):
+        self._busy = False
+        QMessageBox.critical(self, "BACKUP FAILED", message)
+        self.run_btn.setEnabled(True)
+        self.status.setText("FAILED  ·  retry when ready")
+        self.progress.setValue(0)
