@@ -914,3 +914,9 @@ class BrutalistPOS(QWidget):
                 "error",
                 duration_ms=5000,
             )
+        else:
+            self.toast.show_message(
+                "SALE FAILED  ·  CART PRESERVED  ·  PRESS F8 TO RETRY",
+                "error",
+                duration_ms=5000,
+            )
