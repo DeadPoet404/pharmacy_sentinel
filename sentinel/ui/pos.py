@@ -908,3 +908,9 @@ class BrutalistPOS(QWidget):
                 f"background: #0B0D10; border-radius: 10px; color: {COLOR_DIM}; "
                 "font-size: 12px; letter-spacing: 0.08em;"
             )
+        else:
+            self.toast.show_message(
+                "SALE FAILED  ·  CART PRESERVED  ·  PRESS F8 TO RETRY",
+                "error",
+                duration_ms=5000,
+            )
