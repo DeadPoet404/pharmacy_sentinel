@@ -1,16 +1,18 @@
 import sys
 import uuid
+from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QPushButton, QComboBox, QFormLayout, QMessageBox,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from sentinel.logic.pricing import calculate_wac
 from sentinel.logic.inventory import InventoryController
 from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, SectionLabel,
     COLOR_ACCENT, COLOR_DIM, COLOR_TEXT, COLOR_SURFACE,
     COLOR_BORDER, COLOR_MUTED,
+    COLOR_OK, COLOR_DANGER,
 )
 
 
@@ -98,6 +100,14 @@ class BatchIngest(QWidget):
         note.setWordWrap(True)
         body.addWidget(note)
 
+        self.status_lbl = QLabel("BATCH ↵  EXPIRY ↵  QTY ↵  COST ↵  COMMITS")
+        self.status_lbl.setAlignment(Qt.AlignCenter)
+        self.status_lbl.setStyleSheet(
+            f"color: {COLOR_MUTED}; font-size: 11px; font-weight: 700; "
+            "letter-spacing: 0.06em;"
+        )
+        body.addWidget(self.status_lbl)
+
         self.commit_btn = IndustrialButton("EXECUTE INGEST")
         self.commit_btn.setFixedHeight(58)
         self.commit_btn.clicked.connect(self.process_ingest)
@@ -107,6 +117,13 @@ class BatchIngest(QWidget):
         wrap.setLayout(body)
         root.addWidget(wrap, 1)
 
+        # Keyboard flow: BATCH ↵ -> EXPIRY ↵ -> QTY ↵ -> COST ↵ commits
+        self.batch_in.returnPressed.connect(self.expiry_in.setFocus)
+        self.expiry_in.returnPressed.connect(self.qty_in.setFocus)
+        self.qty_in.returnPressed.connect(self.cost_in.setFocus)
+        self.cost_in.returnPressed.connect(self.process_ingest)
+        QTimer.singleShot(0, self.prod_selector.setFocus)
+
     def refresh_products(self):
         self.prod_selector.clear()
         cursor = self.db.conn.cursor()
@@ -114,12 +131,64 @@ class BatchIngest(QWidget):
         for row in cursor.fetchall():
             self.prod_selector.addItem(f"{row[1]}  ·  {row[2]}", row[0])
 
-    def process_ingest(self):
+    def _set_status(self, text, kind="info"):
+        colors = {
+            "info": COLOR_MUTED,
+            "ok": COLOR_OK,
+            "error": COLOR_DANGER,
+        }
+        self.status_lbl.setText(text)
+        self.status_lbl.setStyleSheet(
+            f"color: {colors.get(kind, COLOR_MUTED)}; font-size: 11px; "
+            "font-weight: 700; letter-spacing: 0.06em;"
+        )
+
+    def _validate_fields(self):
+        """Field-level validation with human messages. Returns (msg, values)."""
+        prod_id = self.prod_selector.currentData()
+        if prod_id is None:
+            return "SELECT A PRODUCT FIRST", None
+        batch = self.batch_in.text().strip().upper()
+        if not batch:
+            return "ENTER A LOT / BATCH CODE", None
+        expiry_raw = self.expiry_in.text().strip()
+        if not expiry_raw:
+            return "ENTER AN EXPIRY DATE  ·  YYYY-MM-DD", None
         try:
-            prod_id = self.prod_selector.currentData()
-            qty = int(self.qty_in.text())
-            cost_ghs = float(self.cost_in.text())
-            cost_p = int(cost_ghs * 100)
+            expiry = datetime.strptime(expiry_raw, "%Y-%m-%d").date()
+        except ValueError:
+            return "EXPIRY MUST BE YYYY-MM-DD  ·  e.g. 2027-06-30", None
+        if expiry < datetime.now().date():
+            return f"EXPIRY {expiry_raw} IS IN THE PAST", None
+        try:
+            qty = int(self.qty_in.text().strip())
+        except ValueError:
+            return "QUANTITY MUST BE A WHOLE NUMBER", None
+        if qty <= 0:
+            return "QUANTITY MUST BE GREATER THAN ZERO", None
+        try:
+            cost_ghs = float(self.cost_in.text().strip())
+        except ValueError:
+            return "COST MUST BE A NUMBER  ·  e.g. 12.50", None
+        if cost_ghs < 0:
+            return "COST CANNOT BE NEGATIVE", None
+        return None, {
+            "prod_id": prod_id,
+            "batch": batch,
+            "expiry": expiry_raw,
+            "qty": qty,
+            "cost_ghs": cost_ghs,
+        }
+
+    def process_ingest(self):
+        msg, values = self._validate_fields()
+        if msg:
+            self._set_status(msg, "error")
+            return
+        try:
+            prod_id = values["prod_id"]
+            qty = values["qty"]
+            cost_p = int(values["cost_ghs"] * 100)
 
             cursor = self.db.conn.cursor()
 
@@ -153,7 +222,7 @@ class BatchIngest(QWidget):
             cursor.execute(
                 "INSERT INTO batches (uuid, product_version_id, batch_code, expiry_date, received_at) "
                 "VALUES (?, ?, ?, ?, 'now')",
-                (b_uuid, version_id, self.batch_in.text(), self.expiry_in.text()),
+                (b_uuid, version_id, values["batch"], values["expiry"]),
             )
             batch_id = cursor.lastrowid
 
@@ -165,4 +234,8 @@ class BatchIngest(QWidget):
                 self.on_complete()
 
         except Exception as e:
-            QMessageBox.critical(self, "INGEST ERROR", str(e))
+            try:
+                self.db.conn.rollback()
+            except Exception:
+                pass
+            self._set_status(f"INGEST FAILED  ·  {str(e)[:80]}", "error")
