@@ -18,6 +18,24 @@ from sentinel.logic.sales import SalesController
 from sentinel.logic.pricing import calculate_tier_prices
 
 
+class CartTable(QTableWidget):
+    """Cart table that forwards qty-entry keys to the POS for fast quantity entry."""
+
+    qty_key = Signal(object)
+
+    def keyPressEvent(self, event):
+        key = event.key()
+        if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape, Qt.Key_Backspace):
+            self.qty_key.emit(event)
+            event.accept()
+            return
+        if event.text().isdigit():
+            self.qty_key.emit(event)
+            event.accept()
+            return
+        super().keyPressEvent(event)
+
+
 class SearchLineEdit(QLineEdit):
     """Search input that keeps focus while the POS navigates results with arrows."""
 
@@ -44,6 +62,7 @@ class BrutalistPOS(QWidget):
         self.session_id = session_id
         self.user_name = user_name
         self.current_uom = "UNIT"
+        self.qty_buffer = ""
         self.cart_items = []
         self.sales_ctrl = SalesController(db_manager, "DEV-001")
         self.assets_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "assets")
@@ -151,7 +170,7 @@ class BrutalistPOS(QWidget):
         head.addWidget(self.cart_count)
         col.addLayout(head)
 
-        self.cart_table = QTableWidget(0, 4)
+        self.cart_table = CartTable(0, 4)
         self.cart_table.setAlternatingRowColors(True)
         self.cart_table.setHorizontalHeaderLabels(["ITEM", "UOM", "QTY", "TOTAL"])
         self.cart_table.verticalHeader().setVisible(False)
@@ -160,6 +179,7 @@ class BrutalistPOS(QWidget):
         self.cart_table.setFocusPolicy(Qt.StrongFocus)
         self.cart_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.cart_table.itemDoubleClicked.connect(self.remove_cart_line)
+        self.cart_table.itemSelectionChanged.connect(self._clear_qty_buffer)
         hdr = self.cart_table.horizontalHeader()
         hdr.setSectionResizeMode(0, QHeaderView.Stretch)
         hdr.setSectionResizeMode(1, QHeaderView.Fixed)
@@ -198,6 +218,14 @@ class BrutalistPOS(QWidget):
         cart_ops.addWidget(btn_plus)
         cart_ops.addWidget(btn_rm)
         cart_ops.addStretch()
+        self.qty_hint = QLabel("F5 QTY  ·  TYPE qty ↵")
+        self.qty_hint.setMinimumWidth(190)
+        self.qty_hint.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.qty_hint.setStyleSheet(
+            f"color: {COLOR_DIM}; font-size: 11px; font-weight: 700; "
+            "letter-spacing: 0.1em; background: transparent;"
+        )
+        cart_ops.addWidget(self.qty_hint)
         ls.addLayout(cart_ops)
         col.addWidget(ledger_stack, 1)
 
@@ -364,6 +392,7 @@ class BrutalistPOS(QWidget):
 
         self.workspace.addLayout(col, 7)
         self.search_box.textChanged.connect(self.run_search)
+        self.cart_table.qty_key.connect(self._on_cart_qty_key)
         self.search_box.returnPressed.connect(self._search_return_pressed)
         self.search_box.down_pressed.connect(lambda: self._move_search_selection(1))
         self.search_box.up_pressed.connect(lambda: self._move_search_selection(-1))
@@ -590,6 +619,7 @@ class BrutalistPOS(QWidget):
 
     def setup_shortcuts(self):
         QShortcut(QKeySequence("F2"), self, self.search_box.setFocus)
+        QShortcut(QKeySequence("F5"), self, self.focus_cart)
         QShortcut(QKeySequence("F3"), self, self.open_ingest)
         QShortcut(QKeySequence("F4"), self, self.cycle_uom)
         QShortcut(QKeySequence("F8"), self, self.open_checkout)
@@ -685,6 +715,74 @@ class BrutalistPOS(QWidget):
             self.cart_items[r]["qty"] = q
             self.cart_items[r]["qty_atomic"] = q * self.cart_items[r].get("atoms_per", 1)
         self.update_ledger()
+
+
+    def _paint_qty_hint(self):
+        """Refresh the qty-entry status label next to the cart controls."""
+        if not hasattr(self, "qty_hint"):
+            return
+        if self.qty_buffer:
+            self.qty_hint.setText(f"QTY  →  {self.qty_buffer}  ↵")
+            self.qty_hint.setStyleSheet(
+                f"color: {COLOR_ACCENT}; font-size: 12px; font-weight: 800; "
+                "letter-spacing: 0.12em; background: transparent;"
+            )
+        else:
+            self.qty_hint.setText("F5 QTY  ·  TYPE qty ↵")
+            self.qty_hint.setStyleSheet(
+                f"color: {COLOR_DIM}; font-size: 11px; font-weight: 700; "
+                "letter-spacing: 0.1em; background: transparent;"
+            )
+
+    def _clear_qty_buffer(self):
+        self.qty_buffer = ""
+        self._paint_qty_hint()
+
+    def _commit_qty_buffer(self):
+        """Apply the pending quantity to the selected cart line."""
+        if not self.qty_buffer:
+            # Empty Enter while the cart is focused returns to the search box.
+            self.search_box.setFocus()
+            return
+        r = self._selected_cart_row()
+        if r is None:
+            self._clear_qty_buffer()
+            return
+        qty = max(1, int(self.qty_buffer))
+        self.cart_items[r]["qty"] = qty
+        self.cart_items[r]["qty_atomic"] = qty * self.cart_items[r].get("atoms_per", 1)
+        self.qty_buffer = ""
+        self._paint_qty_hint()
+        self.update_ledger()
+
+    def _on_cart_qty_key(self, event):
+        """Route cart-table key events for quantity fast-entry."""
+        key = event.key()
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            self._commit_qty_buffer()
+        elif key == Qt.Key_Escape:
+            self._clear_qty_buffer()
+        elif key == Qt.Key_Backspace:
+            if self.qty_buffer:
+                self.qty_buffer = self.qty_buffer[:-1]
+                self._paint_qty_hint()
+            else:
+                self.remove_cart_line()
+        elif event.text().isdigit():
+            self.qty_buffer = (self.qty_buffer + event.text())[-3:]
+            self._paint_qty_hint()
+
+    def focus_cart(self):
+        """F5 — move keyboard focus to the cart for quantity fast-entry."""
+        if not self.cart_items:
+            return
+        rows = self.cart_table.rowCount()
+        r = self.cart_table.currentRow()
+        if r < 0 or r >= rows:
+            r = rows - 1
+        self.cart_table.selectRow(r)
+        self.cart_table.setFocus()
+        self._paint_qty_hint()
 
     def open_zreport(self):
         ans = QMessageBox.question(
