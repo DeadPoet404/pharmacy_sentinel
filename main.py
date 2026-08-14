@@ -4,7 +4,7 @@ from PySide6.QtWidgets import QApplication
 from sentinel.db.manager import DatabaseManager
 from sentinel.ui.login import SaaSLogin
 from sentinel.ui.pos import BrutalistPOS
-from sentinel.security.auth import hash_pin
+from sentinel.security.auth import hash_pin, verify_pin
 from sentinel.logic.sessions import SessionManager
 
 def bootstrap_db(db):
@@ -14,6 +14,13 @@ def bootstrap_db(db):
         h, s = hash_pin("1234")
         db.conn.execute("INSERT INTO users (uuid, username, display_name, role, pin_hash, pin_salt, created_at) VALUES (?, 'admin', 'ADMIN', 'owner', ?, ?, 'now')", (str(uuid.uuid4()), h, s))
         db.conn.commit()
+    # UX-012: anyone still using the factory PIN must replace it before
+    # the station opens. Self-healing: once changed, 1234 stops matching.
+    cursor.execute("SELECT id, pin_hash, pin_salt, must_change_pin FROM users WHERE is_active = 1")
+    for uid, pin_hash_blob, pin_salt_blob, must_change in cursor.fetchall():
+        if not must_change and verify_pin("1234", pin_hash_blob, pin_salt_blob):
+            db.conn.execute("UPDATE users SET must_change_pin = 1 WHERE id = ?", (uid,))
+    db.conn.commit()
 
 def run_app():
     app = QApplication(sys.argv)

@@ -1,13 +1,14 @@
 from datetime import datetime, timedelta
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame, QSizePolicy,
+    QDialog,
 )
 from PySide6.QtCore import Qt, QThread, Signal, QObject, QTimer
 from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, COLOR_ACCENT, COLOR_DIM,
     COLOR_TEXT, COLOR_MUTED, COLOR_BORDER, COLOR_SURFACE, COLOR_BG,
 )
-from sentinel.security.auth import verify_pin
+from sentinel.security.auth import verify_pin, hash_pin
 
 
 MAX_ATTEMPTS = 5
@@ -37,6 +38,105 @@ class _PinWorker(QObject):
         except Exception:
             self.bad.emit()
         self.done.emit()
+
+
+class PinChangeDialog(QDialog):
+    """Forced PIN change on first login (UX-012)."""
+
+    def __init__(self, db_manager, user_id, display_name, parent=None):
+        super().__init__(parent)
+        self.db = db_manager
+        self.user_id = user_id
+        self.display_name = display_name
+        self.setWindowTitle("STATION SETUP")
+        self.setFixedSize(440, 460)
+        self.setStyleSheet(GLOBAL_STYLE)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(28, 28, 28, 28)
+        root.setSpacing(14)
+
+        kicker = QLabel("FIRST LOGIN  ·  STATION SETUP")
+        kicker.setStyleSheet(
+            f"color: {COLOR_ACCENT}; font-size: 11px; font-weight: 800; letter-spacing: 0.24em;"
+        )
+        title = QLabel("Set a new PIN")
+        title.setStyleSheet(
+            f"color: {COLOR_TEXT}; font-size: 28px; font-weight: 800; letter-spacing: -1px;"
+        )
+        sub = QLabel(
+            f"Operator: {display_name}\n"
+            "The factory PIN 1234 must be replaced before the station opens."
+        )
+        sub.setWordWrap(True)
+        sub.setStyleSheet(f"color: {COLOR_MUTED}; font-size: 13px;")
+
+        self.new_pin = QLineEdit()
+        self.new_pin.setEchoMode(QLineEdit.Password)
+        self.new_pin.setMaxLength(8)
+        self.new_pin.setPlaceholderText("NEW PIN  ·  4–8 DIGITS")
+        self.new_pin.setAlignment(Qt.AlignCenter)
+
+        self.confirm_pin = QLineEdit()
+        self.confirm_pin.setEchoMode(QLineEdit.Password)
+        self.confirm_pin.setMaxLength(8)
+        self.confirm_pin.setPlaceholderText("REPEAT NEW PIN")
+        self.confirm_pin.setAlignment(Qt.AlignCenter)
+
+        self.err = QLabel("")
+        self.err.setAlignment(Qt.AlignCenter)
+        self.err.setStyleSheet(
+            "color: #E07A5F; font-size: 11px; font-weight: 600; min-height: 16px;"
+        )
+
+        self.save_btn = IndustrialButton("SET PIN  ·  OPEN STATION")
+        self.save_btn.clicked.connect(self.save)
+        cancel_btn = IndustrialButton("CANCEL", primary=False)
+        cancel_btn.clicked.connect(self.reject)
+
+        root.addWidget(kicker)
+        root.addWidget(title)
+        root.addWidget(sub)
+        root.addSpacing(8)
+        root.addWidget(self.new_pin)
+        root.addWidget(self.confirm_pin)
+        root.addWidget(self.err)
+        root.addSpacing(8)
+        root.addWidget(self.save_btn)
+        root.addWidget(cancel_btn)
+
+        # Keyboard flow: PIN ↵ -> CONFIRM ↵ -> save
+        self.new_pin.returnPressed.connect(self.confirm_pin.setFocus)
+        self.confirm_pin.returnPressed.connect(self.save)
+        QTimer.singleShot(0, self.new_pin.setFocus)
+
+    def save(self):
+        pin = self.new_pin.text().strip()
+        confirm = self.confirm_pin.text().strip()
+        if not (pin.isdigit() and 4 <= len(pin) <= 8):
+            self.err.setText("PIN MUST BE 4–8 DIGITS")
+            self.new_pin.setFocus()
+            return
+        if pin != confirm:
+            self.err.setText("PINS DO NOT MATCH")
+            self.confirm_pin.setFocus()
+            return
+        self.save_btn.setEnabled(False)
+        self.save_btn.setText("SAVING…")
+        try:
+            h, s = hash_pin(pin)
+            cur = self.db.conn.cursor()
+            cur.execute(
+                "UPDATE users SET pin_hash = ?, pin_salt = ?, must_change_pin = 0 "
+                "WHERE id = ?",
+                (h, s, self.user_id),
+            )
+            self.db.conn.commit()
+            self.accept()
+        except Exception as e:
+            self.save_btn.setEnabled(True)
+            self.save_btn.setText("SET PIN  ·  OPEN STATION")
+            self.err.setText(f"SAVE FAILED  ·  {str(e)[:60]}")
 
 
 class SaaSLogin(QWidget):
@@ -260,7 +360,36 @@ class SaaSLogin(QWidget):
         self._set_setting("login_failed_attempts", "0")
         self._set_setting("login_locked_until", "")
         self.err.setText("")
+        if self._must_change_pin(user_id):
+            self._open_pin_change(user_id, display_name)
+            return
         self.on_success(user_id, display_name)
+
+    def _must_change_pin(self, user_id):
+        try:
+            cur = self.db.conn.cursor()
+            cur.execute("SELECT must_change_pin FROM users WHERE id = ?", (user_id,))
+            row = cur.fetchone()
+            return bool(row and row[0])
+        except Exception:
+            return False
+
+    def _open_pin_change(self, user_id, display_name):
+        dlg = PinChangeDialog(self.db, user_id, display_name, self)
+        dlg.setWindowModality(Qt.WindowModal)
+        self._change_dlg = dlg
+        dlg.finished.connect(
+            lambda result: self._on_pin_change_finished(user_id, display_name, result)
+        )
+        dlg.show()
+
+    def _on_pin_change_finished(self, user_id, display_name, result):
+        if result == QDialog.Accepted:
+            self.err.setText("")
+            self.on_success(user_id, display_name)
+        else:
+            self.err.setText("SET A NEW PIN TO CONTINUE")
+            self.pin_in.setFocus()
 
     def _on_login_bad(self):
         self._set_busy(False)
