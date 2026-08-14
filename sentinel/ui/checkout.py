@@ -4,13 +4,26 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QFormLayout, QMessageBox, QGraphicsDropShadowEffect,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QShortcut, QKeySequence
 from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, SectionLabel,
     COLOR_ACCENT, COLOR_DIM, COLOR_MUTED, COLOR_TEXT,
     COLOR_SURFACE, COLOR_BORDER, COLOR_BG, COLOR_DANGER,
 )
+
+
+class TenderLineEdit(QLineEdit):
+    """Tender field: E means EXACT — it is never inserted as text."""
+
+    exact_key = Signal()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_E and event.modifiers() in (Qt.NoModifier, Qt.ShiftModifier):
+            self.exact_key.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class SettlementUI(QWidget):
@@ -89,7 +102,7 @@ class SettlementUI(QWidget):
         lbl.setStyleSheet(
             f"color: {COLOR_DIM}; font-size: 10px; font-weight: 800; letter-spacing: 0.18em;"
         )
-        self.tendered_in = QLineEdit()
+        self.tendered_in = TenderLineEdit()
         self.tendered_in.setPlaceholderText("0.00")
         self.tendered_in.setAlignment(Qt.AlignRight)
         self.tendered_in.setStyleSheet(f"""
@@ -150,10 +163,11 @@ class SettlementUI(QWidget):
         root.addWidget(wrap, 1)
 
         self.tendered_in.returnPressed.connect(lambda: self.finish("CASH"))
+        self.tendered_in.exact_key.connect(self.fill_exact)
         self.tendered_in.setFocus()
 
-        # Keyboard-first tender: E/F5 = EXACT, F6/F7/F8 = quick notes
-        QShortcut(QKeySequence("E"), self, self.fill_exact)
+        # Keyboard-first tender: F5 = EXACT, F6/F7/F8 = quick notes
+        # (E is handled by TenderLineEdit so it can never leak into the amount)
         QShortcut(QKeySequence("F5"), self, self.fill_exact)
         QShortcut(QKeySequence("F6"), self, lambda: self.fill_amount(50))
         QShortcut(QKeySequence("F7"), self, lambda: self.fill_amount(100))
