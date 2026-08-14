@@ -147,6 +147,7 @@ class BrutalistPOS(QWidget):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(180)
         self._debounce.timeout.connect(self.run_search)
+        self._undo_stack = []
 
     def _build_nav(self):
         nav = QFrame()
@@ -253,7 +254,7 @@ class BrutalistPOS(QWidget):
         ls = QVBoxLayout(ledger_stack)
         ls.setContentsMargins(0, 0, 0, 0)
         ls.addWidget(self.cart_table, 1)
-        self.cart_empty = QLabel("Empty  ·  type to search, ↵ adds top match  ·  ↑↓ pick  ·  Del removes  ·  +/− qty")
+        self.cart_empty = QLabel("Empty  ·  type to search, ↵ adds top match  ·  ↑↓ pick  ·  Del removes  ·  +/− qty  ·  Ctrl+Z undo")
         self.cart_empty.setAlignment(Qt.AlignCenter)
         self.cart_empty.setStyleSheet(
             f"color: {COLOR_DIM}; font-size: 12px; letter-spacing: 0.06em; "
@@ -688,7 +689,7 @@ class BrutalistPOS(QWidget):
             n = QTableWidgetItem(i["name"])
             u = QTableWidgetItem(i.get("uom", "UNIT"))
             q = QTableWidgetItem(str(i.get("qty", 1)))
-            p = QTableWidgetItem(f"{i['price'] * i.get('qty', 1):.2f}")
+            p = QTableWidgetItem(f"{i['price'] * i.get('qty', 1):,.2f}")
             self._style_item(n)
             self._style_item(u, muted=True)
             self._style_item(q, align_right=True, muted=True)
@@ -779,6 +780,9 @@ class BrutalistPOS(QWidget):
         focus has drifted onto a button or the window itself."""
         if self.search_box.hasFocus() and event.text().isalpha():
             return super().keyPressEvent(event)
+        if not self.search_box.hasFocus() and event.matches(QKeySequence.Undo):
+            self.undo_last()
+            return
         key = event.key()
         if key in (Qt.Key_Delete, Qt.Key_Backspace) and not self.search_box.hasFocus():
             self.remove_cart_line()
@@ -812,6 +816,7 @@ class BrutalistPOS(QWidget):
         r = self._selected_cart_row()
         if r is None:
             return
+        self._push_undo()
         del self.cart_items[r]
         self.update_ledger()
 
@@ -821,6 +826,7 @@ class BrutalistPOS(QWidget):
             return
         q = self.cart_items[r].get("qty", 1) + delta
         if q <= 0:
+            self._push_undo()
             del self.cart_items[r]
         else:
             self.cart_items[r]["qty"] = q
@@ -899,6 +905,21 @@ class BrutalistPOS(QWidget):
         self.cart_table.setFocus()
         self._paint_qty_hint()
 
+
+    def _push_undo(self):
+        """Snapshot the cart before a destructive edit (UX-014)."""
+        self._undo_stack.append([dict(i) for i in self.cart_items])
+        if len(self._undo_stack) > 20:
+            self._undo_stack.pop(0)
+
+    def undo_last(self):
+        """Ctrl+Z restores the cart to the last snapshot."""
+        if not self._undo_stack:
+            return
+        self.cart_items = [dict(i) for i in self._undo_stack.pop()]
+        self.update_ledger()
+        if hasattr(self, "toast"):
+            self.toast.show_message("UNDONE", "info", duration_ms=1200)
     def open_zreport(self):
         ans = QMessageBox.question(
             self,
@@ -971,6 +992,7 @@ class BrutalistPOS(QWidget):
             else:
                 QMessageBox.information(self, "SUCCESS", f"Sale committed. Change: {change:,.2f}")
             self.cart_items = []
+            self._undo_stack.clear()
             self.update_ledger()
             self.run_search()
             self.search_box.setFocus()
