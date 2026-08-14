@@ -2,6 +2,7 @@ import uuid
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QTableWidget, QHeaderView, QComboBox, QFormLayout, QTableWidgetItem,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
@@ -17,7 +18,8 @@ class ProductRegistry(QWidget):
         super().__init__()
         self.db = db_manager
         self.setWindowTitle("Product registry")
-        self.setFixedSize(1040, 720)
+        self.setMinimumSize(1040, 720)
+        self.resize(1100, 780)
         self.setStyleSheet(GLOBAL_STYLE)
 
         root = QVBoxLayout(self)
@@ -116,7 +118,13 @@ class ProductRegistry(QWidget):
         body.addLayout(content, 1)
         wrap = QWidget()
         wrap.setLayout(body)
-        root.addWidget(wrap, 1)
+        wrap.setMinimumSize(wrap.sizeHint())
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(wrap)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(scroll, 1)
 
         self.refresh_list()
 

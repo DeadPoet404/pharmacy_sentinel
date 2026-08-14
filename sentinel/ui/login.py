@@ -49,7 +49,7 @@ class PinChangeDialog(QDialog):
         self.user_id = user_id
         self.display_name = display_name
         self.setWindowTitle("STATION SETUP")
-        self.setFixedSize(440, 460)
+        self.setMinimumSize(440, 460)
         self.setStyleSheet(GLOBAL_STYLE)
 
         root = QVBoxLayout(self)

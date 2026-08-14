@@ -3,6 +3,7 @@ import uuid
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QFormLayout, QMessageBox, QGraphicsDropShadowEffect,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QShortcut, QKeySequence
@@ -33,7 +34,8 @@ class SettlementUI(QWidget):
         self.on_complete = on_complete
 
         self.setWindowTitle("Settlement")
-        self.setFixedSize(440, 560)
+        self.setMinimumSize(440, 560)
+        self.resize(460, 600)
         self.setStyleSheet(GLOBAL_STYLE)
 
         root = QVBoxLayout(self)
@@ -160,7 +162,13 @@ class SettlementUI(QWidget):
 
         wrap = QWidget()
         wrap.setLayout(body)
-        root.addWidget(wrap, 1)
+        wrap.setMinimumSize(wrap.sizeHint())
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(wrap)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(scroll, 1)
 
         self.tendered_in.returnPressed.connect(lambda: self.finish("CASH"))
         self.tendered_in.exact_key.connect(self.fill_exact)

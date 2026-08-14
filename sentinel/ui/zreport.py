@@ -2,6 +2,7 @@ import sys
 import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame, QProgressBar, QMessageBox,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, QThread, QObject, Signal
 from sentinel.logic.backup import BackupEngine
@@ -60,7 +61,8 @@ class ZReportCeremony(QWidget):
         self.sess_mgr = SessionManager(db_manager, device_id)
 
         self.setWindowTitle("End of day")
-        self.setFixedSize(520, 480)
+        self.setMinimumSize(520, 480)
+        self.resize(540, 520)
         self.setStyleSheet(GLOBAL_STYLE)
 
         root = QVBoxLayout(self)
@@ -166,7 +168,13 @@ class ZReportCeremony(QWidget):
         wrap = QWidget()
         wrap.setLayout(body)
         wrap.setStyleSheet(f"background: {COLOR_BG};")
-        root.addWidget(wrap, 1)
+        wrap.setMinimumSize(wrap.sizeHint())
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(wrap)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(scroll, 1)
 
     def start_ceremony(self):
         if getattr(self, "_busy", False):

@@ -4,6 +4,7 @@ from datetime import datetime
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QPushButton, QComboBox, QFormLayout, QMessageBox,
+    QScrollArea,
 )
 from PySide6.QtCore import Qt, QTimer
 from sentinel.logic.pricing import calculate_wac
@@ -24,7 +25,8 @@ class BatchIngest(QWidget):
         self.on_complete = on_complete
 
         self.setWindowTitle("Stock ingest")
-        self.setFixedSize(520, 640)
+        self.setMinimumSize(520, 640)
+        self.resize(540, 680)
         self.setStyleSheet(GLOBAL_STYLE)
 
         root = QVBoxLayout(self)
@@ -115,7 +117,13 @@ class BatchIngest(QWidget):
 
         wrap = QWidget()
         wrap.setLayout(body)
-        root.addWidget(wrap, 1)
+        wrap.setMinimumSize(wrap.sizeHint())
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(wrap)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        root.addWidget(scroll, 1)
 
         # Keyboard flow: BATCH ↵ -> EXPIRY ↵ -> QTY ↵ -> COST ↵ commits
         self.batch_in.returnPressed.connect(self.expiry_in.setFocus)
