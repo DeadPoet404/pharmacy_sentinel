@@ -143,6 +143,10 @@ class BrutalistPOS(QWidget):
         self.run_search()
         QTimer.singleShot(0, self.search_box.setFocus)
         self.toast = Toast(self)
+        self._debounce = QTimer(self)
+        self._debounce.setSingleShot(True)
+        self._debounce.setInterval(180)
+        self._debounce.timeout.connect(self.run_search)
 
     def _build_nav(self):
         nav = QFrame()
@@ -444,7 +448,7 @@ class BrutalistPOS(QWidget):
         col.addLayout(bot_row)
 
         self.workspace.addLayout(col, 7)
-        self.search_box.textChanged.connect(self.run_search)
+        self.search_box.textChanged.connect(self._on_search_text_changed)
         self.cart_table.qty_key.connect(self._on_cart_qty_key)
         self.cart_table.scan_keys.connect(self._on_cart_scan)
         self.search_box.returnPressed.connect(self._search_return_pressed)
@@ -544,6 +548,30 @@ class BrutalistPOS(QWidget):
         self._check_line_stock(line)
         self.update_ledger()
 
+    def _on_search_text_changed(self, txt):
+        """Debounced search (UX-009): one query per typed burst.
+
+        Empty text refreshes immediately (clear = show all). Digit-only
+        input of 8+ characters is treated as a barcode scan and queried
+        instantly — the scanner fast path. Ordinary typing waits for the
+        debounce timer.
+        """
+        if not txt.strip():
+            self._debounce.stop()
+            self.run_search()
+            return
+        if txt.strip().isdigit() and len(txt.strip()) >= 8:
+            self._debounce.stop()
+            self.run_search()
+            return
+        self._debounce.start()
+
+    def _flush_search(self):
+        """Force the pending query to run now (Enter adds fresh results)."""
+        if self._debounce.isActive():
+            self._debounce.stop()
+            self.run_search()
+
     def run_search(self):
         txt = self.search_box.text()
         if not hasattr(self.db, "conn") or self.db.conn is None:
@@ -635,6 +663,7 @@ class BrutalistPOS(QWidget):
         txt = self.search_box.text().strip()
         if not txt:
             return
+        self._flush_search()
         rows = self.search_table.rowCount()
         if rows == 0:
             return
