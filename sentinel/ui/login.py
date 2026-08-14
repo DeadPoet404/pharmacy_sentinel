@@ -1,12 +1,37 @@
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame, QSizePolicy,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal, QObject
 from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, COLOR_ACCENT, COLOR_DIM,
     COLOR_TEXT, COLOR_MUTED, COLOR_BORDER, COLOR_SURFACE, COLOR_BG,
 )
 from sentinel.security.auth import verify_pin
+
+
+class _PinWorker(QObject):
+    """Runs PBKDF2 verification off the UI thread."""
+
+    ok = Signal(int, str)
+    bad = Signal()
+    done = Signal()
+
+    def __init__(self, pin, users):
+        super().__init__()
+        self._pin = pin
+        self._users = users
+
+    def run(self):
+        try:
+            for uid, name, pin_hash, pin_salt in self._users:
+                if verify_pin(self._pin, pin_hash, pin_salt):
+                    self.ok.emit(uid, name)
+                    break
+            else:
+                self.bad.emit()
+        except Exception:
+            self.bad.emit()
+        self.done.emit()
 
 
 class SaaSLogin(QWidget):
@@ -129,6 +154,9 @@ class SaaSLogin(QWidget):
         self.err.setStyleSheet("color: #E07A5F; font-size: 11px; font-weight: 600; min-height: 16px;")
 
         self.btn = IndustrialButton("INITIATE SESSION")
+        self._btn_style = self.btn.styleSheet()
+        self._err_style = self.err.styleSheet()
+        self._busy = False
         self.btn.clicked.connect(self.attempt_login)
         self.pin_in.returnPressed.connect(self.attempt_login)
 
@@ -156,16 +184,70 @@ class SaaSLogin(QWidget):
         self.pin_in.setFocus()
 
     def attempt_login(self):
-        pin = self.pin_in.text()
+        """Start PIN verification off the UI thread (UX-002)."""
+        if self._busy:
+            return
+        pin = self.pin_in.text().strip()
+        if not pin:
+            self.err.setText("Enter the four-digit PIN")
+            self.pin_in.setFocus()
+            return
         cursor = self.db.conn.cursor()
         cursor.execute(
             "SELECT id, display_name, pin_hash, pin_salt FROM users WHERE is_active = 1"
         )
-        for u in cursor.fetchall():
-            if verify_pin(pin, u[2], u[3]):
-                self.err.setText("")
-                self.on_success(u[0], u[1])
-                return
+        users = [(r[0], r[1], r[2], r[3]) for r in cursor.fetchall()]
+        if not users:
+            self.err.setText("No active operators  ·  station remains locked")
+            self.pin_in.setFocus()
+            return
+        self._set_busy(True)
+        self._thread = QThread(self)
+        self._worker = _PinWorker(pin, users)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.ok.connect(self._on_login_ok)
+        self._worker.bad.connect(self._on_login_bad)
+        self._worker.done.connect(self._thread.quit)
+        self._thread.finished.connect(self._worker.deleteLater)
+        self._thread.finished.connect(self._thread.deleteLater)
+        self._thread.start()
+
+    def _set_busy(self, busy):
+        """Loading state: disable inputs, dim the button, show VERIFYING…"""
+        self._busy = busy
+        self.btn.setEnabled(not busy)
+        self.pin_in.setEnabled(not busy)
+        if busy:
+            self.err.setText("VERIFYING…")
+            self.err.setStyleSheet(
+                "color: #E8B86D; font-size: 11px; font-weight: 600; min-height: 16px;"
+            )
+            self.btn.setText("VERIFYING…")
+            self.btn.setStyleSheet("""
+                QPushButton {
+                    background: #181C23;
+                    color: #8B93A7;
+                    border: 1px solid #2A3140;
+                    border-radius: 10px;
+                    font-weight: 800;
+                    font-size: 13px;
+                    letter-spacing: 0.12em;
+                    padding: 0 22px;
+                }
+            """)
+        else:
+            self.err.setStyleSheet(self._err_style)
+            self.btn.setText("INITIATE SESSION")
+            self.btn.setStyleSheet(self._btn_style)
+
+    def _on_login_ok(self, user_id, display_name):
+        self._set_busy(False)
+        self.err.setText("")
+        self.on_success(user_id, display_name)
+
+    def _on_login_bad(self):
+        self._set_busy(False)
         self.pin_in.clear()
         self.err.setText("PIN rejected  ·  station remains locked")
         self.pin_in.setFocus()
