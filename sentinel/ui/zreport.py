@@ -120,6 +120,12 @@ class ZReportCeremony(QWidget):
         )
         ml.addWidget(sess)
         ml.addWidget(dest)
+        self.totals_lbl = QLabel("")
+        self.totals_lbl.setStyleSheet(
+            f"color: {COLOR_ACCENT}; font-size: 14px; font-weight: 800; "
+            "letter-spacing: 0.12em; padding-top: 4px;"
+        )
+        ml.addWidget(self.totals_lbl)
         body.addWidget(meta)
 
         console = QFrame()
@@ -165,6 +171,9 @@ class ZReportCeremony(QWidget):
         self.run_btn.clicked.connect(self.start_ceremony)
         body.addWidget(self.run_btn)
 
+        # UX-015: show the day's totals before the irreversible close
+        self._refresh_totals()
+
         wrap = QWidget()
         wrap.setLayout(body)
         wrap.setStyleSheet(f"background: {COLOR_BG};")
@@ -176,11 +185,28 @@ class ZReportCeremony(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         root.addWidget(scroll, 1)
 
+    def _refresh_totals(self):
+        """UX-015: day totals preview before the irreversible close."""
+        try:
+            cur = self.db.conn.cursor()
+            cur.execute(
+                "SELECT COUNT(*), COALESCE(SUM(total_minor), 0) FROM sales "
+                "WHERE pos_session_id = ?",
+                (self.session_id,),
+            )
+            row = cur.fetchone()
+            count = int(row[0] or 0)
+            total_ghs = int(row[1] or 0) / 100
+        except Exception:
+            count, total_ghs = 0, 0.0
+        self.totals_lbl.setText(f"SALES {count}   ·   TOTAL GHS {total_ghs:,.2f}")
+
     def start_ceremony(self):
         if getattr(self, "_busy", False):
             return
         self._busy = True
         self._pending_success = None
+        self._refresh_totals()
         self.run_btn.setEnabled(False)
         self.status.setText("GENERATING ENCRYPTED ARCHIVE…")
         self.progress.setValue(30)
