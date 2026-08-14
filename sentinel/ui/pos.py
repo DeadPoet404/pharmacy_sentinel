@@ -888,16 +888,21 @@ class BrutalistPOS(QWidget):
         self.checkout_ui.show()
 
     def finalize_sale(self, method, tendered):
+        """Commit the cart. Failure is visible and preserves the cart."""
+        total = float(self.total_lbl.text().replace(",", "") or 0)
         if self.sales_ctrl.commit_sale(
             self.user_id,
             self.session_id,
             self.cart_items,
-            float(self.total_lbl.text().replace(",", "") or 0),
+            total,
             method,
             tendered,
         ):
-            change = tendered - float(self.total_lbl.text().replace(",", "") or 0)
-            self.toast.show_message(f"SALE COMMITTED  ·  CHANGE {change:,.2f}", "success")
+            change = tendered - total
+            if hasattr(self, "toast"):
+                self.toast.show_message(f"SALE COMMITTED  ·  CHANGE {change:,.2f}", "success")
+            else:
+                QMessageBox.information(self, "SUCCESS", f"Sale committed. Change: {change:,.2f}")
             self.cart_items = []
             self.update_ledger()
             self.run_search()
@@ -909,26 +914,16 @@ class BrutalistPOS(QWidget):
                 "font-size: 12px; letter-spacing: 0.08em;"
             )
         else:
-            self.toast.show_message(
-                "SALE FAILED  ·  CART PRESERVED  ·  PRESS F8 TO RETRY",
-                "error",
-                duration_ms=5000,
-            )
-        else:
-            self.toast.show_message(
-                "SALE FAILED  ·  CART PRESERVED  ·  PRESS F8 TO RETRY",
-                "error",
-                duration_ms=5000,
-            )
-        else:
-            self.toast.show_message(
-                "SALE FAILED  ·  CART PRESERVED  ·  PRESS F8 TO RETRY",
-                "error",
-                duration_ms=5000,
-            )
-        else:
-            self.toast.show_message(
-                "SALE FAILED  ·  CART PRESERVED  ·  PRESS F8 TO RETRY",
-                "error",
-                duration_ms=5000,
-            )
+            # [UX-001] canonical finalize_sale
+            if hasattr(self, "toast"):
+                self.toast.show_message(
+                    "SALE FAILED  ·  CART PRESERVED  ·  PRESS F8 TO RETRY",
+                    "error",
+                    duration_ms=5000,
+                )
+            else:
+                QMessageBox.warning(
+                    self,
+                    "SALE FAILED",
+                    "The sale could not be committed. Cart preserved.",
+                )
