@@ -819,6 +819,7 @@ class BrutalistPOS(QWidget):
             self.cart_items = []
             self.update_ledger()
             self.run_search()
+            self.search_box.setFocus()
             self.viz_img.clear()
             self.viz_img.setText("No item\nselected")
             self.viz_img.setStyleSheet(
