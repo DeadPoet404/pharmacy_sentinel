@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QTableWidget, QHeaderView, QTableWidgetItem, QMessageBox, QSizePolicy,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPixmap, QColor, QFont
 from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, SectionLabel, TechnicalCard,
@@ -16,6 +16,24 @@ from sentinel.ui.checkout import SettlementUI
 from sentinel.ui.zreport import ZReportCeremony
 from sentinel.logic.sales import SalesController
 from sentinel.logic.pricing import calculate_tier_prices
+
+
+class SearchLineEdit(QLineEdit):
+    """Search input that keeps focus while the POS navigates results with arrows."""
+
+    up_pressed = Signal()
+    down_pressed = Signal()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Up:
+            self.up_pressed.emit()
+            event.accept()
+            return
+        if event.key() == Qt.Key_Down:
+            self.down_pressed.emit()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
 
 class BrutalistPOS(QWidget):
@@ -52,6 +70,7 @@ class BrutalistPOS(QWidget):
         self.root.addWidget(body, 1)
         self.setup_shortcuts()
         self.run_search()
+        QTimer.singleShot(0, self.search_box.setFocus)
 
     def _build_nav(self):
         nav = QFrame()
@@ -157,7 +176,7 @@ class BrutalistPOS(QWidget):
         ls = QVBoxLayout(ledger_stack)
         ls.setContentsMargins(0, 0, 0, 0)
         ls.addWidget(self.cart_table, 1)
-        self.cart_empty = QLabel("Empty  ·  double-click a match to add  ·  Del removes  ·  +/− qty")
+        self.cart_empty = QLabel("Empty  ·  type to search, ↵ adds top match  ·  ↑↓ pick  ·  Del removes  ·  +/− qty")
         self.cart_empty.setAlignment(Qt.AlignCenter)
         self.cart_empty.setStyleSheet(
             f"color: {COLOR_DIM}; font-size: 12px; letter-spacing: 0.06em; "
@@ -224,12 +243,12 @@ class BrutalistPOS(QWidget):
         """)
         sw = QVBoxLayout(search_wrap)
         sw.setContentsMargins(4, 4, 4, 4)
-        hint = QLabel("  F2  SEARCH CATALOG")
+        hint = QLabel("  F2  SEARCH  ·  TYPE  ·  ↑↓ PICK  ·  ↵ ADD")
         hint.setStyleSheet(
             f"color: {COLOR_DIM}; font-size: 10px; font-weight: 700; "
             "letter-spacing: 0.18em; padding: 8px 12px 0 8px;"
         )
-        self.search_box = QLineEdit()
+        self.search_box = SearchLineEdit()
         self.search_box.setPlaceholderText("Molecule, SKU, or barcode…")
         self.search_box.setStyleSheet("""
             QLineEdit {
@@ -258,6 +277,7 @@ class BrutalistPOS(QWidget):
         self.search_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.search_table.setAlternatingRowColors(True)
         self.search_table.itemDoubleClicked.connect(self.select_item)
+        self.search_table.itemActivated.connect(self.select_item)
         sh = self.search_table.horizontalHeader()
         sh.setMinimumSectionSize(80)
         sh.setSectionResizeMode(0, QHeaderView.Stretch)
@@ -344,6 +364,9 @@ class BrutalistPOS(QWidget):
 
         self.workspace.addLayout(col, 7)
         self.search_box.textChanged.connect(self.run_search)
+        self.search_box.returnPressed.connect(self._search_return_pressed)
+        self.search_box.down_pressed.connect(lambda: self._move_search_selection(1))
+        self.search_box.up_pressed.connect(lambda: self._move_search_selection(-1))
 
     def _style_item(self, item, align_right=False, muted=False):
         item.setForeground(QColor(COLOR_MUTED if muted else COLOR_TEXT))
@@ -502,6 +525,44 @@ class BrutalistPOS(QWidget):
             name.setData(Qt.UserRole + 2, price)
             name.setData(Qt.UserRole + 3, atoms)
         self.search_empty.setVisible(self.search_table.rowCount() == 0)
+
+    def _move_search_selection(self, delta):
+        """Arrow-key navigation over the results list while typing continues."""
+        rows = self.search_table.rowCount()
+        if rows == 0:
+            return
+        cur = self.search_table.currentRow()
+        if cur < 0:
+            new_row = 0 if delta > 0 else rows - 1
+        else:
+            new_row = max(0, min(rows - 1, cur + delta))
+        self.search_table.selectRow(new_row)
+        self.search_table.scrollToItem(self.search_table.item(new_row, 0))
+
+    def _search_return_pressed(self):
+        """Enter adds the selected result (or top match), clears and refocuses.
+
+        Signals are blocked while clearing so we do not re-query the whole
+        catalog after every add — the list stays put until the operator types
+        the next item.
+        """
+        txt = self.search_box.text().strip()
+        if not txt:
+            return
+        rows = self.search_table.rowCount()
+        if rows == 0:
+            return
+        r = self.search_table.currentRow()
+        if r < 0 or r >= rows:
+            r = 0
+        it = self.search_table.item(r, 0)
+        if it is None:
+            return
+        self.select_item(it)
+        self.search_box.blockSignals(True)
+        self.search_box.clear()
+        self.search_box.blockSignals(False)
+        self.search_box.setFocus()
 
     def update_ledger(self):
         self.cart_table.setRowCount(0)
