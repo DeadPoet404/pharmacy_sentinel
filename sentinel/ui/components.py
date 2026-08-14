@@ -13,7 +13,7 @@ COLOR_BORDER = "#2A3140"
 COLOR_BORDER_SOFT = "#1E2430"
 COLOR_TEXT = "#F4F1EA"
 COLOR_MUTED = "#8B93A7"
-COLOR_DIM = "#5C6478"
+COLOR_DIM = "#7A8498"
 COLOR_ACCENT = "#E8B86D"
 COLOR_ACCENT_DIM = "#C4923A"
 COLOR_PRIMARY = COLOR_ACCENT
@@ -148,6 +148,12 @@ QPushButton:disabled {{
     color: {COLOR_DIM};
     border: 1px solid {COLOR_BORDER_SOFT};
 }}
+QPushButton:focus {{
+    border: 2px solid {COLOR_ACCENT};
+}}
+QTableWidget:focus, QTableView:focus {{
+    border: 1px solid {COLOR_ACCENT};
+}}
 """
 
 
@@ -180,6 +186,7 @@ class IndustrialButton(QPushButton):
                 }}
                 QPushButton:hover {{ background: #E9927A; }}
                 QPushButton:disabled {{ background: {COLOR_SURFACE_2}; color: {COLOR_DIM}; }}
+                QPushButton:focus {{ border: 2px solid #FFF8EC; }}
             """)
         elif primary:
             self.setStyleSheet(f"""
@@ -196,6 +203,7 @@ class IndustrialButton(QPushButton):
                 QPushButton:hover {{ background: #F0C98A; }}
                 QPushButton:pressed {{ background: {COLOR_ACCENT_DIM}; }}
                 QPushButton:disabled {{ background: {COLOR_SURFACE_2}; color: {COLOR_DIM}; }}
+                QPushButton:focus {{ border: 2px solid #FFF8EC; }}
             """)
         else:
             self.setStyleSheet(f"""
@@ -217,6 +225,10 @@ class IndustrialButton(QPushButton):
                     background: {COLOR_SURFACE_2};
                     color: {COLOR_DIM};
                     border-color: {COLOR_BORDER_SOFT};
+                }}
+                QPushButton:focus {{
+                    border-color: {COLOR_ACCENT};
+                    color: {COLOR_ACCENT};
                 }}
             """)
 
