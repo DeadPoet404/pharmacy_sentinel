@@ -2,6 +2,7 @@ import os
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QTableWidget, QHeaderView, QTableWidgetItem, QMessageBox, QSizePolicy,
+    QApplication,
 )
 from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QShortcut, QKeySequence, QPixmap, QColor, QFont
@@ -20,21 +21,71 @@ from sentinel.logic.pricing import calculate_tier_prices
 
 
 class CartTable(QTableWidget):
-    """Cart table that forwards qty-entry keys to the POS for fast quantity entry."""
+    """Cart table: qty-entry keys plus barcode-scan burst discrimination.
 
-    qty_key = Signal(object)
+    Human quantity digits arrive slowly and are emitted one at a time
+    through qty_key. A barcode scanner floods digits within milliseconds;
+    once more than three digits accumulate they are treated as a scan and
+    routed to the POS search box (scan_keys) so the scan lands in the
+    product flow instead of corrupting a quantity.
+    """
+
+    qty_key = Signal(str)      # commands: DIGIT:x / ENTER / BACKSPACE / ESC
+    scan_keys = Signal(str)    # detected barcode-scan digit string
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._burst = ""
+        self._burst_timer = QTimer(self)
+        self._burst_timer.setSingleShot(True)
+        self._burst_timer.setInterval(50)
+        self._burst_timer.timeout.connect(self._flush_burst)
 
     def keyPressEvent(self, event):
         key = event.key()
-        if key in (Qt.Key_Return, Qt.Key_Enter, Qt.Key_Escape, Qt.Key_Backspace):
-            self.qty_key.emit(event)
+        if key in (Qt.Key_Return, Qt.Key_Enter):
+            if self._burst:
+                self.scan_keys.emit(self._burst)
+                self._burst = ""
+                self._burst_timer.stop()
+            else:
+                self.qty_key.emit("ENTER")
+            event.accept()
+            return
+        if key == Qt.Key_Backspace:
+            if self._burst:
+                self._burst = self._burst[:-1]
+                if not self._burst:
+                    self._burst_timer.stop()
+            else:
+                self.qty_key.emit("BACKSPACE")
+            event.accept()
+            return
+        if key == Qt.Key_Escape:
+            if self._burst:
+                self._burst = ""
+                self._burst_timer.stop()
+            self.qty_key.emit("ESC")
             event.accept()
             return
         if event.text().isdigit():
-            self.qty_key.emit(event)
+            self._burst += event.text()
+            if len(self._burst) > 3:
+                self.scan_keys.emit(self._burst)
+                self._burst = ""
+                self._burst_timer.stop()
+            else:
+                self._burst_timer.start()
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def _flush_burst(self):
+        """Slow digits are human quantity entry — emit them one at a time."""
+        digits = self._burst
+        self._burst = ""
+        for ch in digits:
+            self.qty_key.emit(f"DIGIT:{ch}")
 
 
 class SearchLineEdit(QLineEdit):
@@ -395,6 +446,7 @@ class BrutalistPOS(QWidget):
         self.workspace.addLayout(col, 7)
         self.search_box.textChanged.connect(self.run_search)
         self.cart_table.qty_key.connect(self._on_cart_qty_key)
+        self.cart_table.scan_keys.connect(self._on_cart_scan)
         self.search_box.returnPressed.connect(self._search_return_pressed)
         self.search_box.down_pressed.connect(lambda: self._move_search_selection(1))
         self.search_box.up_pressed.connect(lambda: self._move_search_selection(-1))
@@ -689,6 +741,8 @@ class BrutalistPOS(QWidget):
         return r
 
     def keyPressEvent(self, event):
+        """Global routing: scans/typing land in the search box even when
+        focus has drifted onto a button or the window itself."""
         if self.search_box.hasFocus() and event.text().isalpha():
             return super().keyPressEvent(event)
         key = event.key()
@@ -700,6 +754,23 @@ class BrutalistPOS(QWidget):
             return
         if key == Qt.Key_Minus:
             self.nudge_qty(-1)
+            return
+        # UX-016: Enter with search text adds the match, even when focus
+        # has drifted (prevents a focused button from swallowing the Enter
+        # that belongs to a scan waiting in the search box).
+        if key in (Qt.Key_Return, Qt.Key_Enter) and self.search_box.text().strip():
+            self._search_return_pressed()
+            return
+        # UX-016: printable input outside an editable field -> search box
+        text = event.text()
+        if (
+            text
+            and text.strip()
+            and text.isprintable()
+            and not isinstance(QApplication.focusWidget(), QLineEdit)
+        ):
+            self.search_box.setFocus()
+            self.search_box.insert(text)
             return
         super().keyPressEvent(event)
 
@@ -761,22 +832,26 @@ class BrutalistPOS(QWidget):
         self._paint_qty_hint()
         self.update_ledger()
 
-    def _on_cart_qty_key(self, event):
-        """Route cart-table key events for quantity fast-entry."""
-        key = event.key()
-        if key in (Qt.Key_Return, Qt.Key_Enter):
+    def _on_cart_qty_key(self, cmd):
+        """Route cart-table key commands for quantity fast-entry."""
+        if cmd == "ENTER":
             self._commit_qty_buffer()
-        elif key == Qt.Key_Escape:
+        elif cmd == "ESC":
             self._clear_qty_buffer()
-        elif key == Qt.Key_Backspace:
+        elif cmd == "BACKSPACE":
             if self.qty_buffer:
                 self.qty_buffer = self.qty_buffer[:-1]
                 self._paint_qty_hint()
             else:
                 self.remove_cart_line()
-        elif event.text().isdigit():
-            self.qty_buffer = (self.qty_buffer + event.text())[-3:]
+        elif cmd.startswith("DIGIT:"):
+            self.qty_buffer = (self.qty_buffer + cmd[6:])[-3:]
             self._paint_qty_hint()
+
+    def _on_cart_scan(self, digits):
+        """A barcode scan arrived while the cart was focused — route to search."""
+        self.search_box.setFocus()
+        self.search_box.setText(digits)
 
     def focus_cart(self):
         """F5 — move keyboard focus to the cart for quantity fast-entry."""
