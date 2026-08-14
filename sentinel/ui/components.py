@@ -143,6 +143,11 @@ QTabBar::tab:selected {{
     color: {COLOR_ACCENT};
     background: {COLOR_SURFACE};
 }}
+QPushButton:disabled {{
+    background: {COLOR_SURFACE_2};
+    color: {COLOR_DIM};
+    border: 1px solid {COLOR_BORDER_SOFT};
+}}
 """
 
 
@@ -174,6 +179,7 @@ class IndustrialButton(QPushButton):
                     padding: 0 22px;
                 }}
                 QPushButton:hover {{ background: #E9927A; }}
+                QPushButton:disabled {{ background: {COLOR_SURFACE_2}; color: {COLOR_DIM}; }}
             """)
         elif primary:
             self.setStyleSheet(f"""
@@ -189,6 +195,7 @@ class IndustrialButton(QPushButton):
                 }}
                 QPushButton:hover {{ background: #F0C98A; }}
                 QPushButton:pressed {{ background: {COLOR_ACCENT_DIM}; }}
+                QPushButton:disabled {{ background: {COLOR_SURFACE_2}; color: {COLOR_DIM}; }}
             """)
         else:
             self.setStyleSheet(f"""
@@ -205,6 +212,11 @@ class IndustrialButton(QPushButton):
                 QPushButton:hover {{
                     border-color: {COLOR_ACCENT};
                     color: {COLOR_ACCENT};
+                }}
+                QPushButton:disabled {{
+                    background: {COLOR_SURFACE_2};
+                    color: {COLOR_DIM};
+                    border-color: {COLOR_BORDER_SOFT};
                 }}
             """)
 
