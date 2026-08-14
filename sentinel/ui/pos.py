@@ -10,7 +10,7 @@ from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, SectionLabel, TechnicalCard,
     COLOR_ACCENT, COLOR_MUTED, COLOR_DIM, COLOR_SURFACE, COLOR_BORDER,
     COLOR_TEXT, COLOR_BG, apply_deep_elevation,
-    Toast,
+    Toast, COLOR_DANGER,
 )
 from sentinel.ui.registry import ProductRegistry
 from sentinel.ui.purchasing import BatchIngest
@@ -528,9 +528,10 @@ class BrutalistPOS(QWidget):
             if line["id"] == p_id and line.get("uom") == uom:
                 line["qty"] = line.get("qty", 1) + 1
                 line["qty_atomic"] = line["qty"] * line.get("atoms_per", 1)
+                self._check_line_stock(line)
                 self.update_ledger()
                 return
-        self.cart_items.append({
+        line = {
             "id": p_id,
             "name": it.text(),
             "qty": 1,
@@ -538,7 +539,9 @@ class BrutalistPOS(QWidget):
             "uom": uom,
             "atoms_per": atoms,
             "qty_atomic": atoms,
-        })
+        }
+        self.cart_items.append(line)
+        self._check_line_stock(line)
         self.update_ledger()
 
     def run_search(self):
@@ -661,6 +664,8 @@ class BrutalistPOS(QWidget):
             self._style_item(u, muted=True)
             self._style_item(q, align_right=True, muted=True)
             self._style_item(p, align_right=True)
+            if i.get("overdraft"):
+                q.setForeground(QColor(COLOR_DANGER))
             self.cart_table.setItem(r, 0, n)
             self.cart_table.setItem(r, 1, u)
             self.cart_table.setItem(r, 2, q)
@@ -878,10 +883,43 @@ class BrutalistPOS(QWidget):
         self.z_ui = ZReportCeremony(self.db, self.session_id, self.user_id, "DEV-001")
         self.z_ui.show()
 
+    def _check_line_stock(self, line):
+        """Warn (non-blocking) when a cart line exceeds on-hand (UX-005)."""
+        try:
+            oh = int(self.sales_ctrl.inv.get_on_hand(line["id"]) or 0)
+        except Exception:
+            oh = None
+        line["overdraft"] = oh is not None and line.get("qty_atomic", 0) > oh
+        if line["overdraft"] and hasattr(self, "toast"):
+            self.toast.show_message(
+                f"LOW STOCK  ·  {line['name']}  ·  ON-HAND {oh}  ·  SHORTAGE WILL BE DEBT",
+                "info",
+                duration_ms=2500,
+            )
+
     def open_checkout(self):
         if not self.cart_items:
             self.toast.show_message("LEDGER EMPTY  ·  ADD A LINE FIRST", "error")
             return
+        short_lines = []
+        for line in self.cart_items:
+            try:
+                oh = int(self.sales_ctrl.inv.get_on_hand(line["id"]) or 0)
+            except Exception:
+                oh = None
+            if oh is not None and line.get("qty_atomic", 0) > oh:
+                short_lines.append(f"· {line['name']}   {oh} on hand")
+        if short_lines:
+            ans = QMessageBox.question(
+                self,
+                "SHORTAGE  ·  DEBT REQUIRED",
+                "Insufficient stock for:\n" + "\n".join(short_lines)
+                + "\n\nCommit the shortage as a DEBT sale?",
+                QMessageBox.Yes | QMessageBox.No,
+                QMessageBox.No,
+            )
+            if ans != QMessageBox.Yes:
+                return
         raw = self.total_lbl.text().replace(",", "")
         t = float(raw or 0)
         self.checkout_ui = SettlementUI(t, self.finalize_sale)
