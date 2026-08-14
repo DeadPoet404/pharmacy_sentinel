@@ -497,8 +497,8 @@ class BrutalistPOS(QWidget):
             "SELECT p.id, p.generic_molecule, p.form, "
             "(SELECT cost_minor_per_unit FROM stock_ledger WHERE product_id = p.id "
             "ORDER BY event_seq DESC LIMIT 1) as wac FROM products p "
-            "WHERE p.generic_molecule LIKE ?",
-            (f"%{txt}%",),
+            "WHERE p.generic_molecule LIKE ? OR p.barcode = ?",
+            (f"%{txt}%", txt),
         )
         self._fill_search(cursor.fetchall())
 

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS products (
   brand TEXT NOT NULL,
   strength TEXT NOT NULL,
   form TEXT NOT NULL,
+  barcode TEXT,
   regulatory_class TEXT NOT NULL CHECK(regulatory_class IN ('POM','OTC','OTHER')),
   is_active INTEGER NOT NULL DEFAULT 1,
   created_at TEXT NOT NULL,

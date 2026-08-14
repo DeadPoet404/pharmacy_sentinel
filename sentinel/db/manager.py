@@ -26,7 +26,16 @@ class DatabaseManager:
         if self.conn is None: self.connect()
         c = self.conn.cursor()
         c.executescript(SCHEMA_DDL)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self):
+        """Additive, idempotent migrations for databases created earlier."""
+        c = self.conn.cursor()
+        cols = {row[1] for row in c.execute("PRAGMA table_info(products)").fetchall()}
+        if "barcode" not in cols:
+            c.execute("ALTER TABLE products ADD COLUMN barcode TEXT")
+            print("[MIGRATE] products.barcode added")
         
     def get_next_event_seq(self, device_id: str) -> int:
         c = self.conn.cursor()

@@ -3,11 +3,12 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLineEdit, QLabel, QFrame,
     QTableWidget, QHeaderView, QComboBox, QFormLayout, QTableWidgetItem,
 )
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QFont
 from sentinel.ui.components import (
     GLOBAL_STYLE, IndustrialButton, TechnicalCard, SectionLabel,
     COLOR_ACCENT, COLOR_DIM, COLOR_TEXT, COLOR_BORDER, COLOR_MUTED,
+    COLOR_OK, COLOR_DANGER,
 )
 
 
@@ -61,6 +62,8 @@ class ProductRegistry(QWidget):
             }}
         """)
 
+        self.barcode_in = QLineEdit()
+        self.barcode_in.setPlaceholderText("SCAN  ·  or type barcode")
         self.generic_in = QLineEdit()
         self.generic_in.setPlaceholderText("e.g. AMOXICILLIN")
         self.brand_in = QLineEdit()
@@ -68,6 +71,7 @@ class ProductRegistry(QWidget):
         self.form_in = QComboBox()
         self.form_in.addItems(["CAPSULE", "SYRUP", "STRIP", "PILL"])
 
+        fl.addRow("BARCODE", self.barcode_in)
         fl.addRow("GENERIC NAME", self.generic_in)
         fl.addRow("BRAND NAME", self.brand_in)
         fl.addRow("DOSAGE FORM", self.form_in)
@@ -75,13 +79,21 @@ class ProductRegistry(QWidget):
         self.save_btn = IndustrialButton("COMMIT TO LEDGER")
         self.save_btn.clicked.connect(self.save_product)
         fl.addRow(self.save_btn)
+
+        self.status_lbl = QLabel("SCAN  →  NAME  →  BRAND ↵  COMMITS")
+        self.status_lbl.setAlignment(Qt.AlignCenter)
+        self.status_lbl.setStyleSheet(
+            f"color: {COLOR_DIM}; font-size: 11px; font-weight: 700; "
+            "letter-spacing: 0.08em; padding-top: 6px;"
+        )
+        fl.addRow(self.status_lbl)
         content.addWidget(form_card, 2)
 
         right = QVBoxLayout()
         right.setSpacing(8)
         right.addWidget(SectionLabel("Catalog"))
-        self.table = QTableWidget(0, 2)
-        self.table.setHorizontalHeaderLabels(["ITEM", "FORM"])
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["ITEM", "FORM", "BARCODE"])
         self.table.verticalHeader().setVisible(False)
         self.table.setShowGrid(False)
         self.table.setAlternatingRowColors(True)
@@ -89,6 +101,7 @@ class ProductRegistry(QWidget):
         self.table.setEditTriggers(QTableWidget.NoEditTriggers)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.verticalHeader().setDefaultSectionSize(42)
         right.addWidget(self.table, 1)
 
@@ -107,9 +120,15 @@ class ProductRegistry(QWidget):
 
         self.refresh_list()
 
+        # Scan-to-capture flow: scan ↵ -> name ↵ -> brand ↵ commits
+        self.barcode_in.returnPressed.connect(self.generic_in.setFocus)
+        self.generic_in.returnPressed.connect(self.brand_in.setFocus)
+        self.brand_in.returnPressed.connect(self.save_product)
+        QTimer.singleShot(0, self.barcode_in.setFocus)
+
     def refresh_list(self):
         cursor = self.db.conn.cursor()
-        cursor.execute("SELECT generic_molecule, form FROM products")
+        cursor.execute("SELECT generic_molecule, form, barcode FROM products")
         prods = cursor.fetchall()
         self.table.setRowCount(0)
         for p in prods:
@@ -117,13 +136,16 @@ class ProductRegistry(QWidget):
             self.table.insertRow(r)
             a = QTableWidgetItem(str(p[0]))
             b = QTableWidgetItem(str(p[1]))
+            c = QTableWidgetItem(str(p[2]) if p[2] else "—")
             a.setForeground(QColor(COLOR_TEXT))
             b.setForeground(QColor(COLOR_MUTED))
+            c.setForeground(QColor(COLOR_MUTED))
             f = a.font()
             f.setWeight(QFont.DemiBold)
             a.setFont(f)
             self.table.setItem(r, 0, a)
             self.table.setItem(r, 1, b)
+            self.table.setItem(r, 2, c)
         self.cat_empty.setVisible(self.table.rowCount() == 0)
 
     def save_product(self):
@@ -131,13 +153,14 @@ class ProductRegistry(QWidget):
         try:
             p_uuid = str(uuid.uuid4())
             cursor.execute(
-                "INSERT INTO products (uuid, generic_molecule, brand, strength, form, "
-                "regulatory_class, created_at, updated_at) VALUES (?, ?, ?, 'N/A', ?, 'OTC', 'now', 'now')",
+                "INSERT INTO products (uuid, generic_molecule, brand, strength, form, barcode, "
+                "regulatory_class, created_at, updated_at) VALUES (?, ?, ?, 'N/A', ?, ?, 'OTC', 'now', 'now')",
                 (
                     p_uuid,
                     self.generic_in.text().upper(),
                     self.brand_in.text().upper(),
                     self.form_in.currentText(),
+                    self.barcode_in.text().strip().upper() or None,
                 ),
             )
             prod_id = cursor.lastrowid
@@ -157,7 +180,18 @@ class ProductRegistry(QWidget):
                 )
             self.db.conn.commit()
             self.refresh_list()
+            self.status_lbl.setText(f"ADDED  ·  {self.generic_in.text().upper()}")
+            self.status_lbl.setStyleSheet(
+                f"color: {COLOR_OK}; font-size: 11px; font-weight: 800; "
+                "letter-spacing: 0.08em; padding-top: 6px;"
+            )
             self.generic_in.clear()
             self.brand_in.clear()
+            self.barcode_in.clear()
+            self.barcode_in.setFocus()
         except Exception as e:
-            print(e)
+            self.status_lbl.setText(str(e))
+            self.status_lbl.setStyleSheet(
+                f"color: {COLOR_DANGER}; font-size: 11px; font-weight: 800; "
+                "letter-spacing: 0.08em; padding-top: 6px;"
+            )
