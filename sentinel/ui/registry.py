@@ -150,6 +150,16 @@ class ProductRegistry(QWidget):
 
     def save_product(self):
         cursor = self.db.conn.cursor()
+        generic = self.generic_in.text().strip().upper()
+        brand = self.brand_in.text().strip().upper() or "UNBRANDED"
+        if not generic:
+            self.status_lbl.setText("ENTER A GENERIC NAME FIRST")
+            self.status_lbl.setStyleSheet(
+                f"color: {COLOR_DANGER}; font-size: 11px; font-weight: 800; "
+                "letter-spacing: 0.08em; padding-top: 6px;"
+            )
+            self.generic_in.setFocus()
+            return
         try:
             p_uuid = str(uuid.uuid4())
             cursor.execute(
@@ -157,8 +167,8 @@ class ProductRegistry(QWidget):
                 "regulatory_class, created_at, updated_at) VALUES (?, ?, ?, 'N/A', ?, ?, 'OTC', 'now', 'now')",
                 (
                     p_uuid,
-                    self.generic_in.text().upper(),
-                    self.brand_in.text().upper(),
+                    generic,
+                    brand,
                     self.form_in.currentText(),
                     self.barcode_in.text().strip().upper() or None,
                 ),
